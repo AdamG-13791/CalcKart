@@ -1,0 +1,180 @@
+;--------------------------------------------------------
+; File Created by SDCC : free open source ANSI-C Compiler
+; Version 4.1.0 #12072 (MINGW64)
+;--------------------------------------------------------
+;	MODULE test
+;	.optsdcc -mz80
+	; Generated using the z80asm/z88 tokens.
+;	XREF __muluchar_rrx_s
+;	XREF __mulschar_rrx_s
+;	XREF __mulint_rrx_s
+;	XREF __mullong_rrx_s
+;	XREF __divuchar_rrx_s
+;	XREF __divschar_rrx_s
+;	XREF __divsint_rrx_s
+;	XREF __divuint_rrx_s
+;	XREF __divulong_rrx_s
+;	XREF __divslong_rrx_s
+;	XREF __rrulong_rrx_s
+;	XREF __rrslong_rrx_s
+;	XREF __rlulong_rrx_s
+;	XREF __rlslong_rrx_s
+
+;--------------------------------------------------------
+; Public variables in this module
+;--------------------------------------------------------
+;	XDEF _main
+;	XDEF _test
+;	XDEF _ang
+;	XDEF _yVel
+;	XDEF _xVel
+;	XDEF _yPos
+;	XDEF _xPos
+;--------------------------------------------------------
+; Externals used
+;--------------------------------------------------------
+;--------------------------------------------------------
+; special function registers
+;--------------------------------------------------------
+;--------------------------------------------------------
+; ram data
+;--------------------------------------------------------
+	; Aread BSS
+
+;_xPos:
+;	DEFS 2
+
+;_yPos:
+;	DEFS 2
+
+;_xVel:
+;	DEFS 2
+
+;_yVel:
+;	DEFS 2
+
+;_ang:
+;	DEFS 1
+;--------------------------------------------------------
+; ram data
+;--------------------------------------------------------
+	; Area  INITIALIZED
+;--------------------------------------------------------
+; absolute external ram data
+;--------------------------------------------------------
+	; Area  DABS (ABS)
+;--------------------------------------------------------
+; global & static initialisations
+;--------------------------------------------------------
+	; Area  HOME
+	; Area  GSINIT
+	; Area  GSFINAL
+	; Area  GSINIT
+;--------------------------------------------------------
+; Home
+;--------------------------------------------------------
+	; Area HOME
+	; Area HOME
+;--------------------------------------------------------
+; code
+;--------------------------------------------------------
+	; Area CODE
+;test.c:8: void test(short a) {
+;	---------------------------------
+; Function test
+; ---------------------------------
+_test:
+;test.c:9: xPos += a;
+	ld	hl, 2
+	add	hl, sp
+	push	de
+	ld	de, _xPos
+	push	de
+	pop	de
+	ld	a, (de)
+	add	a, (hl)
+	ld	(de), a
+	inc	de
+	ld	a, (de)
+	inc	hl
+	adc	a, (hl)
+	ld	(de), a
+	pop	de
+;test.c:10: yPos += a;
+	ld	hl, 2
+	add	hl, sp
+	push	de
+	ld	de, _yPos
+	push	de
+	pop	de
+	ld	a, (de)
+	add	a, (hl)
+	ld	(de), a
+	inc	de
+	ld	a, (de)
+	inc	hl
+	adc	a, (hl)
+	ld	(de), a
+	pop	de
+;test.c:11: if (xPos > 0) {
+	ld	bc, (_xPos)
+;test.c:12: ang -= a;
+	ld	iy, _ang
+	ld	e, (iy+0)
+;test.c:11: if (xPos > 0) {
+	xor	a, a
+	cp	a, c
+	sbc	a, b
+	jp	PO, l_test00111
+	xor	a, $80
+
+l_test00111:
+	jp	M, l_test00101
+	jp	l_test00102
+
+l_test00101:
+;test.c:12: ang -= a;
+	ld	iy, 2
+	add	iy, sp
+	ld	c, (iy+0)
+	ld	hl, _ang
+	ld	a, e
+	sub	a, c
+	ld	(hl), a
+	jp	l_test00104
+
+l_test00102:
+;test.c:14: yPos = xPos * 2;
+	ld	l, c
+	ld	h, b
+	add	hl, hl
+	ld	(_yPos), hl
+;test.c:15: ang += xPos;
+	ld	a, (iy+0)
+	add	a, e
+	ld	(_ang+0), a
+
+l_test00103:
+
+l_test00104:
+;test.c:17: }
+	ret
+;test.c:19: int main() {
+;	---------------------------------
+; Function main
+; ---------------------------------
+_main:
+;test.c:20: test(20);
+	ld	hl, $0014
+	push	hl
+	call	_test
+	pop	af
+;test.c:21: return 123;
+	ld	hl, $007B
+
+l_main00101:
+;test.c:22: }
+	ret
+	; Area CODE
+	; Area  INITIALIZER
+	; Area  CABS (ABS)

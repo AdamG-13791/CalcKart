@@ -1,0 +1,873 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;   Untitled Audio Subsystem for Ti-83+ SE    ;
+;                    v0.1                     ;
+;                 2022 Jan 18                 ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;            Crated by Crazy_Fox2             ;
+;       Feel free to modify and use in        ;
+;             any other projects              ;
+;          Please give credit though          ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;       See readme for more information       ;
+;            as to how this works             ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+audio_versionId	.equ	$01		; v0.1
+#ifndef audio_fps
+audio_fps		.equ	59		; Closest we can get to 60 on crystal timers
+#endif
+
+
+
+; Audio data
+; {
+; By default audio data is stored in OP1-OP6
+; Audio data takes up $3F (63) bytes of data (3 less than OP1-OP6 can contain)
+#ifndef audio_data
+audio_data		.equ		$8478
+#endif
+
+; Location of sound data
+; A limitation of this system is that audio can only ever be located within
+;	a 16384 byte long section of memory.
+; By default this memory location is from $8000 - $BFFF, but this can be
+;	changed by changing the value bellow
+; Valid values are $40, $80, and $C0. ($00 also technically works, but that
+;	would always point to the system ROM, and I don't think that's very useful)
+#ifndef audio_location
+audio_location	.equ		$80
+#endif
+#if (audio_location >= $80)
+#define audio_location_top
+#else
+#define audio_location_bottom
+#endif
+audio_basePtr	.equ	audio_location
+
+; Audio data is separated into 4 chanels:
+;	Left Music, Left SFX, Right Music, Right SFX
+; When a SFX is playing it overides the music but the subsystem
+;	continues playing the music in the background so it can switch back
+;	after the SFX finishes
+
+audio_chanel_size	.equ	$10
+; Offsets for each audio chanel's data
+audio_off_ptr		.equ	$00		; Two bytes, pointer to current audio instruction
+audio_off_subFreq	.equ	$02		; Additional precision for frequency, used for better pitch sweeping
+audio_off_freq		.equ	$03		; Current frequency for this chanel
+audio_off_timer		.equ	$04		; Time until next instruction is read
+audio_off_sweep		.equ	$05		; Information for how the pitch is being swept
+audio_off_ptrSav	.equ	$06		; Two bytes, saved pointer for audio subroutine calls
+audio_off_cycle1	.equ	$08		; Four bytes, Cycle information
+audio_off_cycle2	.equ	$09		;	Used to give notes a bit more ~color~
+audio_off_cycle3	.equ	$0A		;	Offsets to add or subtract from the note's frequency
+audio_off_cycle4	.equ	$0B		;	Rapidly cycled on each waveform alternation
+audio_off_loopCount	.equ	$0C		; Loop counter, keeps track of how many times we've looped for finite loops
+
+; Absolute data positions
+audio_data_leftMus	.equ	audio_data
+audio_data_rightMus	.equ	audio_data + audio_chanel_size
+audio_data_leftSfx	.equ	audio_data + (audio_chanel_size * 2)
+audio_data_rightSfx	.equ	audio_data + (audio_chanel_size * 3)
+audio_leftMus_ptr	.equ	audio_data_leftMus + audio_off_ptr
+audio_rightMus_ptr	.equ	audio_data_rightMus + audio_off_ptr
+audio_leftSfx_ptr	.equ	audio_data_leftSfx + audio_off_ptr
+audio_rightSfx_ptr	.equ	audio_data_rightSfx + audio_off_ptr
+
+; Current cycle & frequency, stored independantly of the music/sfx split
+audio_left_cyclePtr	.equ	audio_data_leftMus + $0D
+audio_right_cyclePtr .equ	audio_data_rightMus + $0D
+audio_left_freq		.equ	audio_data_leftMus + $0F
+audio_right_freq	.equ	audio_data_rightMus + $0F
+; Current state of the output to the I/O port
+audio_curWaveAmp	.equ	audio_data_leftSfx + $0D
+; Page of current audio data
+audio_page_mus		.equ	audio_data_leftSfx + $0E
+audio_page_sfx		.equ	audio_data_leftSfx + $0F
+; Backup sweep value, used internally durring the audio update routine
+audio_sweepSav		.equ	audio_data_rightSfx + $0D
+; Lock value, make sure multiple audio steps are not running at a time (interupts are enabled during audio step)
+audio_lock			.equ	audio_data_rightSfx + $0E
+#ifdef audio_relative
+; Relative jump location
+audio_jumpBase		.equ	audio_data_rightSfx + $0F
+#endif
+
+; }
+
+
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;   Initialize Music Subroutine    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Initializes audio variables and hardware timers
+; Inputs:
+;	None
+; Outputs:
+;	None
+; Destroys:
+;	a, bc, de, hl
+audio_init:	; {
+	; Init default values
+	ld hl, audio_data
+	ld de, audio_data+1
+	ld (hl), 0
+	ld bc, $003D
+	ldir
+	#if audio_location < $80
+	; Mark music and sfx as not playing
+	ld a, $80
+	ld (audio_leftMus_ptr+1), a
+	ld (audio_leftSfx_ptr+1), a
+	ld (audio_rightMus_ptr+1), a
+	ld (audio_rightSfx_ptr+1), a
+	#endif
+	; Start audio soon!
+	ld a, $01
+	ld (audio_data_leftMus+audio_off_timer), a
+	ld (audio_data_rightMus+audio_off_timer), a
+	; Initialize crystal timer 3 (rest will be initialized in audio_step)
+	ld a, $40
+	out ($36), a
+	ld a, $03
+	out ($37), a
+	ld a, (32768 / 3) / audio_fps
+	out ($38), a
+	; Mark audio step as not running (works if a is not 1, probobally fine)
+	ld (audio_lock), a
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;     Disable Music Subroutine     ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Turns off the crystal tiemrs involved in the audio subroutine
+; Inputs:
+;	None
+; Outputs:
+;	None
+; Destroys:
+;	a
+audio_exit:	; {
+	; Disable crystal timers and audio output
+	xor a
+	out ($30), a
+	out ($33), a
+	out ($36), a
+	out ($00), a
+	ret
+; }
+	
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;       Start playing Music        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Starts music
+; Inputs:
+;	hl: left audio pointer
+;	de: right audio pointer
+;	a: audio page
+; Outputs:
+;	None
+; Destroys:
+;	None
+audio_mus_start: ; {
+	; Set music pointer
+	ld (audio_leftMus_ptr), hl
+	ld (audio_rightMus_ptr), de
+	#ifndef audio_noPageSwap
+	ld (audio_page_mus), a
+	#endif
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;    Start playing Sound Effect    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Starts a sound effect
+;	Can start a sound effect on the left and right at one time
+;	Set the pointer to $0000 to not start sfx on that chanel
+; Inputs:
+;	hl: left sfx pointer
+;	de: right sfx pointer
+;	a: audio page
+; Outputs:
+;	None
+; Destroys:
+;	a
+audio_sfx_start: ; {
+	#ifndef audio_noPageSwap
+	ld (audio_page_sfx), a
+	#endif
+	; Set sfx pointer
+	ld a, h		; Check if play sfx
+	or a
+	jr z, audio_sfx_start_checkRight
+	; Save sfx pointer and set timer to start soon
+	ld (audio_leftSfx_ptr), hl
+	ld a, $01
+	ld (audio_data_leftSfx+audio_off_timer), a
+audio_sfx_start_checkRight:
+	ld a, d		; Check if play sfx
+	or a
+	ret z
+	; Save sfx pointer and set timer to start soon
+	ld (audio_rightSfx_ptr), de
+	ld a, $01
+	ld (audio_data_rightSfx+audio_off_timer), a
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Stop playing Music        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Stops the currently playing music
+; Inputs:
+;	None
+; Outputs:
+;	None
+; Destroys:
+;	hl
+audio_mus_stop: ; {
+	#ifdef audio_location_top
+	ld hl, $0000
+	#else
+	ld hl, $8000
+	#endif
+	; Stop music
+	ld (audio_leftMus_ptr), hl
+	ld (audio_rightMus_ptr), hl
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;    Stop playing Sound Effect     ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Stops a sound effect on a channel
+; Inputs:
+;	a: channels to end sfx on
+;		bit 0 set: stop left channel
+;		bit 1 set: stop right channel
+; Outputs:
+;	None
+; Destroys:
+;	a, hl
+audio_sfx_stop: ; {
+	#ifdef audio_location_top
+	ld hl, $0000
+	#else
+	ld hl, $8000
+	#endif
+	; Stop left sfx
+	rrca
+	jr nc, $+5
+	ld (audio_leftSfx_ptr), hl
+	; Stop right sfx
+	rrca
+	ret nc
+	ld (audio_rightSfx_ptr), hl
+	ret
+; }
+	
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;            Audio Step            ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Run 59 times per second by default from the audio interupt routine
+;	Sets up the next frame of the music to be played
+; Inputs:
+;	None
+; Outputs:
+;	None
+; Destroys:
+;	a, hl
+audio_step:		; {
+	; Check if audio step is already running
+	ld a, (audio_lock)
+	dec a
+	ret z
+	; Mark audio step as already running
+	ld a, $01
+	ld (audio_lock), a
+	ei
+	
+	push de
+	push bc
+	push ix
+	
+	; Load audio page
+	#ifndef audio_noPageSwap
+	ld bc, (audio_page_mus-1)	; ld b, (audio_page_mus)	c doesn't hold relevent info right now
+	#endif
+	
+	; Update left music channel
+	ld ix, audio_data_leftMus
+	ld hl, (audio_leftMus_ptr)
+	call audio_step_channel
+	ld (audio_leftMus_ptr), hl
+	
+	; Update left sfx channel
+	#ifndef audio_noPageSwap
+	ld bc, (audio_page_sfx-1)
+	#endif
+	ld ix, audio_data_leftSfx
+	ld hl, (audio_leftSfx_ptr)
+	call audio_step_channel
+	ld (audio_leftSfx_ptr), hl
+	
+	; Update left channel crystal timer if no note previously playing or if carry set (carry preserved if no sfx playing)
+	ld b, $00	; No note update
+	jr c, audio_step_left_startPlayingNote
+	in a, ($30)
+	or a
+	jr nz, audio_step_left_setFreq
+audio_step_left_startPlayingNote:
+	inc b		; Note update
+	ld a, %00000010
+	out ($31), a
+audio_step_left_setFreq:
+	; Set currently playing frequency
+	ld hl, audio_data_leftSfx+audio_off_cycle2
+	ld a, (audio_data_leftSfx+audio_off_freq)
+	or a
+	jr nz, audio_step_left_sfxPlay
+	; Play music frequency
+	ld a, (audio_data_leftMus+audio_off_freq)
+	or a
+	jr z, audio_step_left_disableChannel
+	ld hl, audio_data_leftMus+audio_off_cycle2
+audio_step_left_sfxPlay:
+	; Set base frequency, 32768 Hz if less than $90, 10922.667 Hz otherwise
+	cp $90
+	jr c, audio_step_left_play_biggerHz
+	; 10922 Hz
+	sub 87
+	ld (audio_left_freq), a
+	ld a, $40
+	jr audio_step_left_finPlay
+audio_step_left_play_biggerHz:
+	; 32768 Hz
+	add a, 25
+	ld (audio_left_freq), a
+	ld a, $44
+audio_step_left_finPlay:
+	bit 0, b
+	jr z, audio_step_left_end
+	out ($30), a
+	out ($32), a
+	jr audio_step_left_end
+audio_step_left_disableChannel:
+	; Disable left music channel
+	xor a
+	out ($30), a
+	
+audio_step_left_end:
+	; Reset duty cycle pointer
+	ld (audio_left_cyclePtr), hl
+	
+	
+audio_step_right:
+	
+	; Update right music channel
+	#ifndef audio_noPageSwap
+	ld bc, (audio_page_mus-1)
+	#endif
+	ld ix, audio_data_rightMus
+	ld hl, (audio_rightMus_ptr)
+	call audio_step_channel
+	ld (audio_rightMus_ptr), hl
+	
+	; Update right sfx channel
+	#ifndef audio_noPageSwap
+	ld bc, (audio_page_sfx-1)
+	#endif
+	ld ix, audio_data_rightSfx
+	ld hl, (audio_rightSfx_ptr)
+	call audio_step_channel
+	ld (audio_rightSfx_ptr), hl
+	
+	; Update right channel crystal timer if no note previously playing or if carry set
+	ld b, $00	; No note update
+	jr c, audio_step_right_startPlayingNote
+	in a, ($33)
+	or a
+	jr nz, audio_step_right_setFreq
+audio_step_right_startPlayingNote
+	inc b		; Note update
+	ld a, %00000010
+	out ($34), a
+audio_step_right_setFreq:
+	; Set currently playing frequency
+	ld hl, audio_data_rightSfx+audio_off_cycle2
+	ld a, (audio_data_rightSfx+audio_off_freq)
+	or a
+	jr nz, audio_step_right_sfxPlay
+	; Play music frequency
+	ld a, (audio_data_rightMus+audio_off_freq)
+	or a
+	jr z, audio_step_right_disableChannel
+	ld hl, audio_data_rightMus+audio_off_cycle2
+audio_step_right_sfxPlay:
+	; Set base frequency, 32768 Hz if less than $90, 10922.667 Hz otherwise
+	cp $90
+	jr c, audio_step_right_play_biggerHz
+	; 10922 Hz
+	sub 87
+	ld (audio_right_freq), a
+	ld a, $40
+	jr audio_step_right_finPlay
+audio_step_right_play_biggerHz:
+	; 32768 Hz
+	add a, 25
+	ld (audio_right_freq), a
+	ld a, $44
+audio_step_right_finPlay:
+	bit 0, b
+	jr z, audio_step_end
+	out ($33), a
+	out ($35), a
+	jr audio_step_end
+audio_step_right_disableChannel:
+	; Disable right music channel
+	xor a
+	out ($33), a
+	
+audio_step_end:
+	; Reset duty cycle pointer
+	ld (audio_right_cyclePtr), hl
+	
+	; Audio step no longer running
+	xor a
+	ld (audio_lock), a
+	
+	pop ix
+	pop bc
+	pop de
+	ret
+	
+	
+	
+	; Returns cFlag set if note change
+audio_step_channel:	; {
+	; Check if channel playing
+	bit 7, h
+	#ifdef audio_location_top
+	ret z	; If audio is above $8000 then top bit reset means nothing playing
+	#else
+	ret nz	; Otherwise top bit set means nothing playing
+	#endif
+	
+	; Channel sweep
+	ld a, (ix+audio_off_sweep)
+	or a
+	jr z, audio_step_channel_noSweep
+	; Shift sweep into position
+	ld e, a
+	xor a
+	bit 7, e
+	jr z, $+3
+	dec a
+	sla e \ rla
+	sla e \ rla
+	ld d, a
+	; Add sweep to frequency
+	ld a, (ix+audio_off_freq)
+	push hl
+	sub $90		; We want carry set if we cross the $90 point, not $00
+	ld h, a
+	ld l, (ix+audio_off_subFreq)
+	add hl, de	; Carry set if crossed the $90 range (or reset if negative, correct for this later)
+	ld (ix+audio_off_subFreq), l
+	ld a, h
+	pop hl
+	push af
+	add a, $90
+	ld (ix+audio_off_freq), a
+	pop af
+	; Correct c flag if negative sweep
+	bit 7, d
+	jr z, $+3
+	ccf		; Flip c flag
+	; C flag is now set if we sweeped past the $90 frequency
+	; We must do this because this marks the border between the two
+	;	crystal timer sections, so we must re-initialize the
+	;	crystal timer interupts
+audio_step_channel_noSweep:
+	
+	
+	; Check if next note for channel is to be played
+	dec (ix+audio_off_timer)
+	ret nz
+	
+	; Reset sweep
+	ld a, c
+	ld (audio_sweepSav), a		; Save sweep in case of continue instruction
+	ld (ix+audio_off_sweep), 0
+audio_step_instr_loop:
+	; Get 3 bytes of instruction
+	; Temperarily swaps memory banks, interupts enabled after this.
+	; hl will be incrimented by 3, instructions that take fewer
+	; parameters will decrement hl
+	#ifndef audio_noPageSwap
+	di
+	#if audio_location == $80
+	ld a, b
+	out ($07), a
+	#endif
+	#if audio_location == $C0
+	in a, ($05)
+	push af
+	ld b, a
+	out ($05), a
+	#endif
+	#if audio_location == $40
+	in a, ($06)
+	push af
+	ld b, a
+	out ($06), a
+	#endif
+	#endif
+	ld c, (hl)
+	inc hl
+	ld d, (hl)
+	inc hl
+	ld e, (hl)
+	inc hl
+	#ifndef audio_noPageSwap
+	#if audio_location == $80
+	ld a, $81
+	out ($07), a
+	#endif
+	#if audio_location == $C0
+	pop af
+	out ($05), a
+	#endif
+	#if audio_location == $40
+	pop af
+	out ($06), a
+	#endif
+	ld a, c
+	ei
+	#endif
+	
+	; Interperet Instruction
+	rlca
+	jr nc, audio_step_instr_play
+	rlca
+	jr nc, audio_step_instr_call
+	rlca
+	jr nc, audio_step_instr_sweep
+	rlca
+	jr nc, audio_step_instr_cycle
+	rlca
+	jr nc, audio_step_contOrJump
+	rlca
+	jr nc, audio_step_instr_loopJump
+	rlca
+	jr nc, audio_step_instr_return
+	
+	; End instruction
+	; Disable channel
+	#ifdef audio_location_top
+	ld h, $00
+	ld (ix+audio_off_freq), h
+	#else
+	ld h, $80
+	ld (ix+audio_off_freq), 0
+	#endif
+	ret
+	
+audio_step_instr_return:
+	; Return instruction
+	; Load saved pointer
+	ld h, (ix+audio_off_ptrSav+1)
+	ld l, (ix+audio_off_ptrSav)
+	jr audio_step_instr_loop
+	
+audio_step_instr_play:
+	; Play instruction
+	; Get & save length
+	ld (ix+audio_off_timer), c
+	; Save pitch
+	ld (ix+audio_off_freq), d
+	ld (ix+audio_off_subFreq), $80
+	; Return, done with instructions for this frame
+	dec hl
+	scf		; Set carry flag
+	ret
+	
+audio_step_instr_sweep:
+	; Sweep instruction
+	; Setup Sweep pitch
+	ld a, c
+	rlca \ rlca \ rlca
+	and %11111000
+	ld (ix+audio_off_sweep), a
+	; Check if new pitch
+	bit 7, d
+	jr z, audio_step_instr_sweep_noNewPitch
+	; New pitch, setup registers and go to play code
+	ld c, d
+	res 7, c
+	ld d, e
+	inc hl		; play will decrement, correct for this
+	jr audio_step_instr_play
+audio_step_instr_sweep_noNewPitch:
+	; No new pitch, just save timer and return
+	dec hl
+	ld (ix+audio_off_timer), d
+	scf
+	ret
+	
+audio_step_instr_loopJump:
+	; Loop instruction
+	; Get loop number
+	ld a, c
+	ld c, d
+	sla c \ rla
+	sla c \ rla
+	and %00001111
+	inc a
+	; If relative addressing then jump does not correct value, must correct ourselves
+	#ifdef audio_relative
+	res 7, d
+	res 6, d
+	#endif
+	; Increment loop counter, jump if loop number is not equal to loop counter
+	inc (ix+audio_off_loopCount)
+	cp (ix+audio_off_loopCount)
+	jr nz, audio_step_instr_jump
+	; Broke free of loop, reset loop counter and fetch next instruction
+	ld (ix+audio_off_loopCount), 0
+	jr audio_step_instr_loop
+	
+audio_step_contOrJump:
+	rlca
+	jr nc, audio_step_instr_cont
+	
+audio_step_instr_jump:
+	; Jump instruction, set pointer to parameters
+	#ifdef audio_relative
+	; Add relative address
+	ld hl, (audio_jumpBase)
+	add hl, de
+	#else
+	; Set or reset bits depending on base audio location
+	#ifdef audio_location_top
+	set 7, d
+	#else
+	res 7, d
+	#endif
+	#if (audio_location_top % $80) >= $40
+	set 6, d
+	#else
+	res 6, d
+	#endif
+	ex de, hl
+	#endif
+	jp audio_step_instr_loop
+	
+audio_step_instr_call:
+	; Call instruction
+	; Save return address
+	dec hl
+	ld (ix+audio_off_ptrSav+1), h
+	ld (ix+audio_off_ptrSav), l
+	; Jump to new location
+	#ifdef audio_relative
+	; Relative jump, goto jump instruction to add relative address
+	ld e, d
+	ld d, c
+	res 7, d
+	jr audio_step_instr_jump
+	#else
+	#if audio_location != $80
+	ld e, d
+	ld d, c
+	jr audio_step_instr_jump		; Correct pointer if necesarry
+	#else
+	; Top 2 bits set correctly if audio_location = $80
+	ld l, d
+	ld h, c
+	jp audio_step_instr_loop
+	#endif
+	#endif
+	
+audio_step_instr_cycle:
+	; Cycle instruction
+	; Setup instrument cycle
+	; Format:	1  1  1  0  a4 a3 a2 a1
+	;			b4 b3 b2 b1 b0 c4 d0 a0
+	;			c3 c2 c1 c0 d4 d3 d2 d1
+	; Frequency played will be added to each value in a cycle to produce
+	; a more varied sound, rather than just plain ol' square waves
+	; IMPORTANT NOTE: a, c, and d are all unsigned and have $10 subtracted
+	; to get the true value. b is signed and needs no subtraction.
+	; This is a bit messy, but the code is more efficient, and I don't
+	; plan on compiling songs by hand anyway.
+	
+	; Shift a into place
+	ld a, c
+	and %00001111
+	sra d
+	rla
+	sub $10
+	ld (ix+audio_off_cycle1), a
+	; Shift d into place
+	ld a, e
+	and %00001111
+	sra d
+	rla
+	sub $10
+	ld (ix+audio_off_cycle4), a
+	; Shift c into place
+	ld a, e
+	sra d
+	rra
+	rrca \ rrca \ rrca
+	and %00011111
+	sub $10
+	ld (ix+audio_off_cycle3), a
+	ld (ix+audio_off_cycle2), d
+	jp audio_step_instr_loop
+	
+audio_step_instr_cont:
+	; Check if restore sweep
+	rlca
+	jr nc, audio_step_instr_cont_noRestoreSweep
+	; Restore sweep
+	ld a, (audio_sweepSav)
+	ld (ix+audio_off_sweep), a
+audio_step_instr_cont_noRestoreSweep:
+	; Continue playing note, no new frequency
+	ld (ix+audio_off_timer), d
+	dec hl
+	or a	; Reset carry flag
+	ret
+; }
+	
+; }
+	
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;       Audio Interrupt Routine        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Call this on your interrupt routine
+;	Crystal timer 1: Left audio waveform
+;	Crystal timer 2: Right audio waveform
+;	Crystal timer 3: Progress in song/sfx
+; Inputs:
+;	None
+; Outputs:
+;	cFlag: set if we were given a crystal timer interupt,
+;			reset if we didn't
+; Destroys:
+;	a, hl
+audio_int:
+audio_interupt:		; {
+	; Check which interrupt
+	in a, ($04)
+	rlca
+	jr c, audio_int_crystal3
+	rlca
+	jr c, audio_int_crystal2
+	rlca
+	jr c, audio_int_crystal1
+	; Some other interupt, return and let main interupt routine deal with it
+	or a
+	ret
+audio_int_crystal3:	; {
+	; Acknowlege timer 3
+	ld a, %00000011
+	out ($37), a
+	; Play music
+	call audio_step
+	scf
+	ret
+; }
+	
+
+audio_int_crystal2:	; {
+	; Output to the loop control port to acknowledge the interrupt
+	ld a, %00000010
+	out ($34), a
+	; Flip right channel (ring)
+	ld a, (audio_curWaveAmp)
+	xor %00000010
+	out ($00), a
+	ld (audio_curWaveAmp), a
+	; Set next timer based on current frequency and cycle data
+	; Output current frequency plus the current cycle variance
+	ld a, (audio_right_freq)
+	ld hl, (audio_right_cyclePtr)
+	add a, (hl)
+	out ($35), a
+	; Increment cycle pointer
+	inc l
+	; Loop if bit 2 of l is 1
+	bit 2, l
+	jr z, audio_int_crystal2_noCycleLoop
+	res 2, l
+audio_int_crystal2_noCycleLoop:
+	ld (audio_right_cyclePtr), hl
+	; Return from interrupt
+	scf
+	ret
+; }
+
+
+audio_int_crystal1:	; {
+	; Output to the loop control port to acknowledge the interrupt
+	ld a, %00000010
+	out ($31), a
+	; Flip left channel (tip)
+	ld a, (audio_curWaveAmp)
+	xor %00000001
+	out ($00), a
+	ld (audio_curWaveAmp), a
+	; Set next timer based on current frequency and cycle data
+	; Output current frequency plus the current cycle variance
+	ld a, (audio_left_freq)
+	ld hl, (audio_left_cyclePtr)
+	add a, (hl)
+	out ($32), a
+	; Increment cycle pointer
+	inc l
+	; Loop if bit 2 of l is 1
+	bit 2, l
+	jr z, intRoutine_SE_crystal1_noCycleLoop
+	res 2, l
+intRoutine_SE_crystal1_noCycleLoop:
+	ld (audio_left_cyclePtr), hl
+	; Return from interrupt
+	scf
+	ret
+; }
+
+; }
+	
+	
+	
+.end
+.end
+	

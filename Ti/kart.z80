@@ -1,0 +1,310 @@
+; Code for the Karts
+
+
+
+moveCar:
+; Move Kart	{
+	
+	; Copy car data to buffer
+	ld de, buffer
+	ld hl, carData
+	ld bc, $0020
+	ldir
+	;ld ix, buffer
+	
+	; Calculate abolute velocity
+	ld de, (buffer+car_yVel)
+	ld hl, (buffer+car_xVel)
+	call xy_to_ma
+	push de
+	
+	; Turn {
+	; maxAngVel = min(vel, 256) / 8
+	;sra b
+	;rr c
+	;sra b
+	;rr c
+	ld a, b
+	or a
+	jr z, moveCar_turn_calcMaxVel
+	ld a, $20
+	jr moveCar_turn_setMaxVel
+moveCar_turn_calcMaxVel:
+	ld a, c
+	rrca
+	rrca
+	rrca
+	and %00011111
+moveCar_turn_setMaxVel:
+	ld c, a
+	ld de, (buffer+car_ang)	; e=ang, d=angVel
+	ld a, (curPhysicsInput)
+	ld b, a
+	ld a, d
+	jr z, moveCar_turn_zero		; z flag still set from and instruction (or is nz from jump)
+	; Change angle velocity based on input
+	; If no input is held angle will accelerate toward zero
+	bit 5, b
+	jr nz, moveCar_turn_left
+	bit 4, b
+	jr nz, moveCar_turn_right
+	; No direction held, check if close to zero
+	cp $04
+	jr c, moveCar_turn_zero
+	cp $FC
+	jr nc, moveCar_turn_zero
+	; No direction held, accelerate towards zero vel
+	bit 7, a
+	jr nz, moveCar_turn_right
+moveCar_turn_left:
+	; Accelerate Left
+	sub $06
+	bit 7, a
+	jr z, moveCar_turn_save
+	cpl		; Same as neg-1, doesn't matter for our purposes
+	cp c
+	cpl
+	jr c, $+4
+	ld a, c
+	neg
+	jr moveCar_turn_save
+moveCar_turn_zero:
+	xor a
+	jr moveCar_turn_save
+moveCar_turn_right:
+	; Accelerate Right
+	add a, $06
+	bit 7, a
+	jr nz, moveCar_turn_save
+	cp c
+	jr c, $+3
+	ld a, c
+	
+moveCar_turn_save:
+	; Change angle
+	ld d, a
+	ld c, a
+	xor a
+	bit 7, c
+	jr z, $+3
+	dec a
+	ld b, $04
+	sla c
+	rla
+	djnz $-3
+	ld b, a
+	ld a, (buffer+car_ang_sub)
+	add a, c
+	ld (buffer+car_ang_sub), a
+	ld a, b
+	adc a, e
+	ld e, a
+	ld (buffer+car_ang), de
+; }
+	
+	; Hop {
+	
+	; Check for hop if in drive or drift state
+	ld a, (buffer+car_state)
+	cp $02
+	jr nc, moveCar_hop_noHop
+	ld a, (curPhysicsInput)
+	bit 1, a
+	jr z, moveCar_hop_noHop
+	; Start hopping
+	xor a
+	ld (buffer+car_zPos), a
+	ld a, $20
+	ld (buffer+car_zVel), a
+	ld a, car_state_air
+	ld (buffer+car_state), a
+	
+moveCar_hop_noHop:
+	
+; }
+	
+	pop de
+	
+	; Move car along plane {
+	
+	; Accelerate if pressing 2nd
+	ld a, (curPhysicsInput)
+	bit 3, a
+	jr z, moveCar_noAccelGas
+	ld bc, $0030
+	ld a, (buffer+car_ang)
+	call applyForce_xy_ma
+moveCar_noAccelGas:
+	; Decelerate if pressing Alpha
+	ld a, (curPhysicsInput)
+	rrca
+	jr nc, moveCar_noBreak
+	ld bc, -$0022
+	ld a, (buffer+car_ang)
+	call applyForce_xy_ma
+moveCar_noBreak:
+	
+	; Decelerate to 0.9*velocity in facing direction, 0.7*velocity in perpendicular direction
+	; Rotate vectors to compensate for varying car angle
+	; Friction has a greater effect perpendicular to car,
+	; so we rotate vectors so x is parelel and y is perpendicular
+	; Decelerate every other physics frame to help mitigate velocities never reaching zero
+	ld a, (globalTimerLoLo)
+	bit 0, a
+	jr z, moveCar_noDecel
+	ld a, (buffer+car_ang)
+	push af
+	neg
+	call rotate_xy
+	; Decelerate in rotated x direction
+	push de
+	ex de, hl
+	ld bc, $00F0
+	call multSigned
+	ld l, h
+	ld h, e
+	pop de
+	; Decelerate in rotated y direction
+	push hl
+	ld c, $D0	; b should still be 0
+	call multSigned
+	ld d, e
+	ld e, h
+	pop hl
+	; Rotate again and apply acceleration
+	pop af
+	call rotate_xy
+	
+	; Set velocity to 0 if low enough
+	ld bc, $0024
+	call deadzoneHLDE
+	
+moveCar_noDecel:
+	
+	; Save velocity
+	ld (buffer+car_yVel), de
+	ld (buffer+car_xVel), hl
+	
+	; Add position
+	exx
+	ld bc, (buffer+car_subPos)
+	ld de, (buffer+car_yPos)
+	ld hl, (buffer+car_xPos)
+	call moveVelocity
+	
+	; Save position
+	ld (buffer+car_yPos), de
+	ld (buffer+car_xPos), hl
+	ld (buffer+car_subPos), bc
+	
+	; }
+	
+	; Move car vertically {
+	ld a, (buffer+car_state)
+	cp car_state_air
+	jr nz, moveCar_air_noAir
+	
+	; Move by z-velocity
+	ld hl, (buffer+car_zVel)
+	ld h, $00
+	bit 7, l
+	jr z, $+3
+	dec h
+	ld b, $04
+	call shiftHL_left
+	ex de, hl
+	ld hl, (buffer+car_zPosLo)
+	ld a, (buffer+car_zPosHi)
+	ld h, a
+	add hl, de
+	
+	; Check if grounded
+	bit 7, h
+	jr z, moveCar_air_noGround
+	; TODO: Go into drift if turning, fall if over pit
+	xor a
+	ld (buffer+car_state), a
+	ld hl, $0000
+	jr moveCar_air_saveZPos
+	
+moveCar_air_noGround:
+	; Accelerate downwards
+	ld a, (buffer+car_zVel)
+	sub a, $06
+	ld (buffer+car_zVel), a
+	
+moveCar_air_saveZPos:
+	; Save new position
+	ld a, l
+	ld (buffer+car_zPosLo), a
+	ld a, h
+	ld (buffer+car_zPosHi), a
+	
+moveCar_air_noAir:
+	; }
+	
+	
+	; Skip tile collision if high off the ground
+	ld a, (buffer+car_zPos)
+	cp $04
+	jr nc, moveCar_skipCol
+	; Perform tile collision code
+	ld hl, (buffer+car_xPos)
+	ld de, (buffer+car_yPos)
+	call getTileCollisionType
+	
+	; Branch based on collision
+	ld h, colBranchTable / 256
+	rlca
+	add a, colBranchTable % 256
+	ld l, a
+	call hlJump_indirect
+moveCar_skipCol:
+	
+	
+	; Move data back to car data
+	ld hl, buffer
+	ld de, carData
+	ld bc, $0020
+	ldir
+	
+	ret
+	
+	
+; }
+
+
+
+col_spring:		; {
+	
+	; Boing!
+	
+	; Bounce if in grounded state (drive or drift) (0 or 1)
+	ld a, (buffer+car_state)
+	or a
+	jr z, col_spring_boing
+	dec a
+	ret nz
+	
+col_spring_boing:
+	; Set zVel and set state to airborne
+	xor a
+	ld (buffer+car_zPos), a
+	ld a, car_state_air
+	ld (buffer+car_state), a
+	ld a, $50
+	ld (buffer+car_zVel), a
+	
+	ret
+	
+	
+	
+; }
+
+
+
+
+car_state_drive	.equ	$00
+car_state_drift	.equ	$01
+car_state_air	.equ	$02
+car_state_ouch	.equ	$03

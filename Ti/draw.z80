@@ -1,0 +1,1444 @@
+; Draw Functions {
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Copy Sprite to RAM         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Copies a sprite from ROM to buffer in RAM to prepare for drawing
+; Inputs:
+;	a: page
+;	hl: ROM sprite pointer
+; Outputs:
+;	iy: sprite buffer
+; Destroys:
+;	a, hl
+copySprToRAM:		; {
+	push bc
+	push de
+	ld c, a
+	ld a, (basePage)
+	sub c
+	di
+	out ($07), a
+	ld de, buffer
+	push de
+	pop iy
+	ld bc, $0100
+	ldir
+	ld a, $C1		; Should work for both the 83+ and SE
+	out ($07), a
+	ei
+	pop de
+	pop bc
+	
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;              Put Sprite              ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Draws a masked sprite
+;	Modified from https://wikiti.brandonw.net/index.php?title=Z80_Routines:Graphic:put8x8sprite
+; Inputs:
+;	b = height
+;	d = xPos
+;	e = yPos
+;	hl = address of sprite, sprite and mask are interleaved
+; Outputs:
+;	none
+; Destroys:
+;	a, bc, de, hl, ix
+putSprite:		; {
+	
+	; Calculate the Clipping
+	; Vertical Clipping
+	ld a, %11111111
+	ld (temp), a
+	ld a, e		; If yPos is negative
+	or a		; try to clip off top
+	jp m, putSprite_clipTop
+	
+	sub $40		; If yPos >= 64
+	ret nc		; sprite is off-screen
+	
+	neg			; If (64 - yPos) > height
+	cp b		; no need for clipping
+	jr nc, putSprite_vertClipDone
+	
+	ld b, a		; Clip by setting height to (64 - yPos)
+	jr putSprite_vertClipDone
+	
+putSprite_clipTop:
+	ld a, b		; If the
+	neg			; yPos <= -height
+	sub e		; sprite is
+	ret nc		; off-screen
+	
+	push af
+	add a, b	; Get number of clipped rows
+	ld e, 0		; Set yPos to 0 (top of screen)
+	ld b, e		; Advance image data pointer
+	ld c, a
+	sla c
+	add hl, bc
+	pop af
+	neg			; Get the number of
+	ld b, a		; visible rows (height)
+	
+putSprite_vertClipDone:
+	; Horizontal Clipping
+	ld c, 0
+	ld a, d
+	
+	cp -7		; Clip left if 0 > xPos >= -7
+	jr nc, putSprite_clipLeft
+	
+	cp 96		; If xPos >= 96
+	ret nc		; sprite is off-screen
+	
+	cp 89		; Clip right if not 0 <= xPos < 89
+	jr c, putSprite_horizClipDone
+	
+putSprite_clipRight:
+	and %00000111	; Loop to figure out the clipping mask
+	ld c, a
+	ld a, %11111111
+putSprite_findRightMask:
+	add a, a
+	dec c
+	jr nz, putSprite_findRightMask
+	ld (temp), a
+	ld a, d
+	jr putSprite_horizClipDone
+	
+putSprite_clipLeft:
+	and %00000111	; Loop to figure out the clipping mask
+	ld c, a
+	ld a, %11111111
+putSprite_findLeftMask:
+	add a, a
+	dec c
+	jr nz, putSprite_findLeftMask
+	cpl
+	ld (temp), a
+	ld a, d
+	add a, 96		; Not sure what exactly this does :\
+	ld c, 24
+
+putSprite_horizClipDone:
+	
+	push hl
+	; Calculate pointer (hl = screen + (xPos * 64) + yPos)
+	ld h, 0
+	ld l, e
+	xor a
+	srl d
+	rra
+	srl d
+	rra
+	ld e, a
+	add hl, de
+	ld de, plotSScreen
+	add hl, de
+	
+	; Move screen pointer to ix variable
+	push hl
+	pop ix
+	pop hl
+	
+	ld d, 0			; Correct adress if clipping
+	ld e, c			; on the left side
+	sbc hl, de		; Whatever that means
+	
+	and %00000111	; x sub-pos
+	jr z, putSprite_aligned
+	ld c, a
+	
+putSprite_rowLoop:
+	push bc
+	ld b, c
+	ld a, (temp)	; Mask out part of sprite
+	ld e, a
+	and (hl)		; sprite
+	inc hl
+	ld d, a
+	ld a, e
+	and (hl)		; mask
+	inc hl
+	ld c, 0
+	ld e, c
+	
+putSprite_shiftLoop:
+	srl a
+	rr c
+	srl d
+	rr e
+	djnz putSprite_shiftLoop
+	
+	; a=mask left	c=mask right	d=left	e=right
+	; Put Left Sprite
+	ld b, a		; Save Mask
+	and (ix)	; Get shown-through Background
+	or d		; Draw Sprite on top of Background
+	ld (ix), a	; Put line
+	
+	; Put Right Sprite
+	ld a, c		; Get Mask
+	and (ix+64)	; Get shown-through Background
+	or e		; Draw Sprite on top of Background
+	ld (ix+64),a; Put line
+	
+	; Loop
+	inc ix
+	pop bc
+	djnz putSprite_rowLoop
+	ret
+	
+putSprite_aligned:
+	
+putSprite_putLoop:
+	ld c, (hl)	; sprite
+	inc hl
+	ld a, (hl)	; mask
+	inc hl
+	
+	; a=sprite	c=mask
+	and (ix)	; Get shown-through Background
+	or c		; Draw Sprite on top of Background
+	ld (ix), a	; Put line
+	
+	inc ix
+	djnz putSprite_putLoop
+	ret
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;    Put Scaled Sprite Width/Height    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Draws a masked scaled sprite via a given width/height
+;	Loosly based on https://wikiti.brandonw.net/index.php?title=Z80_Routines:Graphic:put8x8sprite
+;	Width and height should be less than 64 or else the routine may break
+;	Width and height measured in pixels, Base width sould be a multiple of 8
+; Inputs:
+;	b: height
+;	c: width
+;	d: xPos
+;	e: yPos
+;	h: sprite base height
+;	l: sprite base width
+;	iy: address of sprite, sprite and mask are interleaved
+; Outputs:
+;	none
+; Destroys:
+;	a, bc, de, hl, bc', de', hl', ix, iy (Basically all the registers), (temp+0 - temp+4)
+putSprite_scaled_wh:	; {
+	; Calculate xScale (width / baseWidth)
+	push hl
+	push bc
+	exx
+	pop de
+	pop bc
+	ld d, 0
+	ld b, d
+	call DE_Div_BC
+	push hl
+	; Calculate yScale (height / baseHeight)
+	exx
+	push hl
+	ld a, b
+	exx
+	ld e, a
+	pop bc
+	ld c, b
+	ld b, 0
+	ld d, b
+	call DE_Div_BC
+	ld b, h
+	ld c, l
+	ld de, $0000
+	exx
+	pop bc
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;           Put Scaled Sprite          ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Draws a masked scaled sprite via a given xScale & yScale
+;	Loosly based on https://wikiti.brandonw.net/index.php?title=Z80_Routines:Graphic:put8x8sprite
+;	Width and height measured in pixels, Base width sould be a multiple of 8
+; Inputs:
+;	bc: xScale
+;	bc': yScale
+;	d: xPos
+;	e: yPos
+;	d': xOff
+;	e': yOff
+;	h: sprite base height
+;	l: sprite base width
+;	iy: address of sprite in RAM, sprite and mask are interleaved
+; Outputs:
+;	none
+; Destroys:
+;	a, bc, de, hl, bc', de', hl', ix, iy (Basically all the registers), (temp+0 - temp+4)	
+putSprite_scaled:	; {
+	; Subtract yOff*yScale
+	exx
+	push de
+	ld d, 0
+	call DE_Times_BC
+	pop de
+	ld a, h
+	neg
+	exx
+	add a, e
+	ld e, a
+	; Subtract xOff*xScale
+	push bc
+	exx
+	pop hl
+	push bc
+	ld c, d
+	ld b, 0
+	ex de, hl
+	call DE_Times_BC
+	pop bc
+	ld a, h
+	neg
+	exx
+	add a, d
+	ld d, a
+	
+	
+	ld a, $09
+	ld (temp+4), a
+	xor a
+	ld (temp+2), a
+	; Save x and y positions for clipping calculation
+	ld (temp), de
+	
+	
+	; Calculate screen pointer		{
+	push hl
+	push bc
+	ld hl, plotSScreen
+	; Set yPos to clipTop if yPos < clipTop
+	ld a, (clipTop)
+	cp e
+	jp m, $+6
+	jp po, $+6
+	jp po, $+4
+	ld e, a
+	; Add yPos
+	ld b, 0
+	ld c, e
+	add hl, bc
+	; Set xPos to clipLeft if xPos < clipLeft
+	ld a, (clipLeft)
+	cp d
+	jp m, $+6
+	jp po, $+6
+	jp po, $+4
+	ld d, a
+	; Add xPos*64
+	ld c, d
+	xor a
+	sla c
+	rla
+	sla c
+	rla
+	sla c
+	rla
+	ld b, a
+	ld a, c
+	and %11000000
+	ld c, a
+	add hl, bc
+	; Save initial byte pos counter
+	ld a, $08
+	sub d
+	dec a
+	and %00000111
+	inc a
+	ld (temp+3), a
+	push hl
+	pop ix
+	pop bc
+	pop hl
+; }
+	
+	
+	; Y Skip = 1 / yScale
+	exx
+	ld de, $FFFF	; Close enough for now, can't find an inverse routine online
+	call DE_Div_BC
+	push de
+	
+	; Scaled Height = Base Height * yScale
+	exx
+	ld a, h
+	exx
+	ld e, a
+	ld d, 0
+	call DE_Times_BC
+	
+	; Check if clipping on the bottom (yPos + scaledHeight > bottomClip)	{
+	ld a, (temp)
+	ld d, a
+	add a, h
+	ld l, a
+	ld a, (clipBottom)
+	cp l
+	jr nc, putSprite_scaled_noBottomClip
+	bit 7, l
+	jr z, putSprite_scaled_bottomClip
+	bit 7, d
+	jr nz, putSprite_scaled_noBottomClip
+putSprite_scaled_bottomClip:
+	; Recalculate height for bottom clip
+	; height = bottomClip - yPos
+	; Return if negative or zero height	(fully off screen)
+	sub d
+	dec a
+	bit 7, a
+	jp nz, pop1ret
+	inc a
+	ld h, a
+	
+putSprite_scaled_noBottomClip:
+	; Check if clipping on the top (yPos < topClip or yPos is negative)
+	ld a, (clipTop)
+	bit 7, d
+	jr nz, putSprite_scaled_topClip
+	cp d
+	jr c, putSprite_scaled_noTopClip
+putSprite_scaled_topClip:
+	; Top clip
+	; sprite yStart = (topClip-yPos)*scaleY
+	sub d
+	push af
+	push hl
+	ld e, a
+	ld d, 0
+	call DE_Times_BC
+	ld a, h
+	; height -= yStart
+	; Return if negative height	(fully off screen)
+	pop hl
+	ld l, a
+	ld a, h
+	sub l
+	jp c, pop2ret
+	or a
+	jp z, pop2ret
+	ld h, a
+	; Get new position in sprite data		ADD SUPPORT FOR SCALE
+	; iy += (yStart*baseWidth/4)
+	exx
+	ld a, l
+	exx
+	rrca
+	rrca
+	ld c, a
+	ld b, 0
+	pop de
+	ld e, d
+	ld d, 0
+	push hl
+	call DE_Times_BC
+	ex de, hl
+	add iy, de
+	pop hl
+putSprite_scaled_noTopClip:
+	; }
+	
+	
+	ld a, h
+	exx
+	; X Skip = 1 / xScale
+	push bc
+	ld h, a
+	exx
+	pop bc
+	ld de, $FFFF
+	call DE_Div_BC
+	push de
+	; Width = Base Width * xScale
+	exx
+	ld a, l
+	exx
+	ld e, a
+	ld d, 0
+	call DE_Times_BC
+; Check if clipping on the right (xPos + scaledWidth > rightClip)	{
+	ld a, (temp+1)
+	ld d, a
+	add a, h
+	ld l, a
+	ld a, (clipRight)
+	cp l
+	jr nc, putSprite_scaled_noRightClip
+	bit 7, l
+	jr z, putSprite_scaled_rightClip
+	bit 7, d
+	jr nz, putSprite_scaled_noRightClip
+putSprite_scaled_rightClip:
+	; Recalculate width for right clip
+	; width = rightClip - xPos
+	; Return if negative width (fully off screen)
+	sub d
+	dec a
+	bit 7, a
+	jp nz, pop2ret
+	inc a
+	ld h, a
+putSprite_scaled_noRightClip:
+	; Check if clipping on the left (xPos < leftClip or xPos is negative)
+	ld a, (clipLeft)
+	bit 7, d
+	jr nz, putSprite_scaled_leftClip
+	cp d
+	jr c, putSprite_scaled_noLeftClip
+	jr z, putSprite_scaled_noLeftClip
+putSprite_scaled_leftClip:
+	; Left clip
+	; xStart = leftClip-xPos
+	sub d
+	; sprite xStart = xStart / xScale
+	push af
+	push hl
+	ld e, 0
+	ld d, a
+	call DE_Div_BC
+	; width -= xStart
+	; Return if negative width (fully off screen)
+	pop hl
+	pop af
+	neg
+	add a, h
+	jp nc, pop2ret
+	jp z, pop2ret
+	ld h, a
+	
+	; Get new position in sprite data
+	; iy += (spr xStart/8)*2
+	ld a, e
+	rrca
+	rrca
+	and %00111110
+	ld c, a
+	ld b, 0
+	add iy, bc
+	; Save initial strip shift (xStart mod 8)
+	ld a, e
+	and %00000111
+	ld (temp+2), a
+	; Save initial output byte pos counter
+	ld l, a
+	ld a, $08
+	ld (temp+3), a
+	inc a
+	sub l
+	ld (temp+4), a
+putSprite_scaled_noLeftClip:
+	; }
+	
+	
+	ld a, h
+	pop de
+	exx
+	ld b, l
+	
+	; Save scaled width & height
+	ld l, a
+	dec h
+	ld (temp), hl	; Save scaled sprite width and base sprite height (minus one)
+	ld h, 0
+	; Base sprite width divided by 4 (byte width times 2)
+	ld a, b
+	rrca
+	rrca
+	ld l, a
+	pop de			; Retrieve Y Skip
+	push hl			; Save base sprite byte width (times two) and prev yPos
+putSprite_scaled_setupFinal:
+	
+	; Save image pointers and Y Skip
+	push iy
+	push ix
+	push de
+	ld de, $007F
+	push de
+	
+	
+	; Main loop, draws from left to right, top to bottom
+	; a: misc
+	; b: misc counter
+	; c: unscaled sprite byte boundary counter
+	; d: scaled mask buffer
+	; e: scaled sprite buffer
+	; h: unscaled mask buffer
+	; l: unscaled sprite buffer
+	; b': scaled sprite byte boundary counter
+	; c': scaled width counter
+	; de': x skip
+	; hl': current x pos
+	; ix: image buffer pointer
+	; iy: sprite data pointer
+	; (temp): initial width counter
+	; (temp+1): scaled height
+	; (temp+2): initial sprite shift
+	; (temp+3): initial screen byte pos
+	; (temp+4): initial sprite byte pos
+putSprite_scaled_setupPutLoop:
+	; Load first strip
+	ld h, (iy)
+	inc iy
+	ld l, (iy)
+	inc iy
+	ld de, $FF00
+	; Shift first strip
+	ld a, (temp+2)
+	or a
+	jr z, putSprite_scaled_setupPutLoop_noShift
+	ld b, a
+putSprite_scaled_setupPutLoop_shiftLoop:
+	rlc h
+	rlc l
+	djnz putSprite_scaled_setupPutLoop_shiftLoop
+putSprite_scaled_setupPutLoop_noShift:
+	; Load sprite boundary counter
+	ld a, (temp+4)
+	ld c, a
+	exx
+	; Setup put loop
+	ld a, (temp)
+	ld c, a
+	ld a, (temp+3)
+	ld b, a
+	ld hl, $0080
+putSprite_scaled_putLoop:
+	; Increment sprite data position
+	add hl, de
+	ld a, h
+	or a
+	ld h, 0
+	exx
+	jr z, putSprite_scaled_putPxlAgain
+	dec a
+	jr z, putSprite_scaled_noPxlSkip
+	; Skip appropriate number of pixels
+	ld b, a
+putSprite_scaled_skipPxl_loop:
+	; Check if we must retrieve next sprite data strip
+	dec c
+	jr z, putSprite_scaled_nextSprStrip_skipPxl
+putSprite_scaled_skipPxl_ret:
+	sla h
+	sla l
+	djnz putSprite_scaled_skipPxl_loop
+putSprite_scaled_noPxlSkip:
+	; Check if we must retrieve next sprite data strip
+	dec c
+	jr z, putSprite_scaled_nextSprStrip_noSkip
+putSprite_scaled_noSkip_ret:
+	; Rotate pixels into sprite put buffer
+	rlc h	; rlc is used so we can retrieve rotated bit if we must put the pixel multiple times
+	rl d
+	rlc l
+	rl e
+putSprite_scaled_exxThenPutLoop:
+	exx
+	; Check if end of row
+	dec c
+	jr z, putSprite_scaled_nextRow
+	; Loop row
+	djnz putSprite_scaled_putLoop
+	exx
+	; Mask & save strip to image buffer
+	ld a, (ix)
+	and d
+	or e
+	ld (ix), a
+	; Move image buffer pointer to next column
+	exx
+	ld a, c
+	ld bc, 64
+	add ix, bc
+	ld c, a
+	ld b, $08
+	jr putSprite_scaled_putLoop
+
+putSprite_scaled_nextSprStrip_skipPxl:
+	ld c, $08
+	; Get next sprite strip
+	ld h, (iy)
+	inc iy
+	ld l, (iy)
+	inc iy
+	jr putSprite_scaled_skipPxl_ret
+putSprite_scaled_nextSprStrip_noSkip:
+	ld c, $08
+	; Get next sprite strip
+	ld h, (iy)
+	inc iy
+	ld l, (iy)
+	inc iy
+	jr putSprite_scaled_noSkip_ret
+	
+putSprite_scaled_putPxlAgain:
+	; Put previously put pixel again
+	ld a, d
+	rrca
+	rlca
+	rla
+	ld d, a
+	ld a, e
+	rrca
+	rlca
+	rla
+	ld e, a
+	jr putSprite_scaled_exxThenPutLoop
+	
+	
+putSprite_scaled_nextRow:
+	; Shift last strip into position
+	ld a, b
+	exx
+	ld b, a
+	dec b
+	jr z, putSprite_scaled_nextRow_noShift
+putSprite_scaled_nextRow_shiftLoop:
+	sli d
+	sla e
+	djnz putSprite_scaled_nextRow_shiftLoop
+putSprite_scaled_nextRow_noShift:
+	; Draw last strip
+	ld a, (ix)
+	and d
+	or e
+	ld (ix), a
+	
+	; Move to next row
+	pop hl
+	pop de
+	pop ix
+	pop iy
+	pop bc
+	inc ix
+	
+	; Check if repeat row or skip row
+	add hl, de
+	; Check if end draw
+	ld a, (temp+1)
+	dec a
+	ret z
+	ld (temp+1), a
+	inc a
+	ret z
+	ld a, h
+	sub b
+	ld b, h
+	jr nz, putSprite_scaled_nextRow_skip
+	; Repeat row
+	push bc
+	push iy
+	push ix
+	push de
+	push hl
+	jp putSprite_scaled_setupPutLoop
+putSprite_scaled_nextRow_skip:
+	; Skip appropriate number of rows
+	push bc
+	ld b, 0
+putSptire_scaled_nextRow_skip_loop:
+	add iy, bc
+	dec a
+	jr nz, putSptire_scaled_nextRow_skip_loop
+	push iy
+	push ix
+	push de
+	push hl
+	jp putSprite_scaled_setupPutLoop
+	
+	
+; }
+	
+	
+drawSprite3d_entity_fullSize:
+	push hl
+	ld hl, $0100
+	ld (temp+10), hl
+	ld (temp+12), hl
+	pop hl
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Draw 3D Sprite (Entity)        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	3d draw routine specialized for being called from an entity
+;	Retrieves position from entity data pointed to by ix
+; Inputs:
+;	b: sprite angle
+;	c: sprite page
+;	hl: sprite pointer
+;	(temp+10) - (temp+11): sprite x scale
+;	(temp+12) - (temp+13): sprite y scale
+;	a: angle segment size (0 if sprite does not rotate)
+; Outputs:
+;	None
+; Destroys:
+;	a, bc, de, hl, ix, (temp+0 - temp+6)
+drawSprite3d_entity:	; {
+	ld (temp+9), a
+	ld (temp+7), bc
+	push hl
+	ld h, (ix+ent_yPos+1)
+	ld l, (ix+ent_yPos)
+	ld b, $05
+	call shiftHL_right
+	push hl
+	ld h, (ix+ent_xPos+1)
+	ld l, (ix+ent_xPos)
+	ld b, $05
+	call shiftHL_right
+	pop bc
+	ex de, hl
+	ld a, (ix+ent_zPos)
+	pop hl
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Draw 3D Sprite         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Draw sprite in 3d space
+; Inputs:
+;	a: zPos
+;	bc: yPos
+;	de: xPos
+;	hl: sprite pointer
+;	(temp+7): sprite page
+;	(temp+8): sprite angle
+;	(temp+9): angle segment size (256/visible angles) (0 if sprite does not rotate)
+;	(temp+10) - (temp+11): sprite x scale
+;	(temp+12) - (temp+13): sprite y scale
+; Outputs:
+;	None
+; Destroys:
+;	a, bc, de, hl, ix, (temp+0 - temp+6)
+drawSprite3d:	; {
+	; Check if sprite is in front of camera
+	; Simple check that tests either the x or y position of the sprite with
+	; either the x or y position of the camera, dependingn on the camera's
+	; current facing angle.
+	push hl
+	push af
+	; Branch based on camera angle
+	ld a, (cam_ang)
+	add a, $20
+	cp $80
+	jr c, drawSprite3d_checkDraw_pos
+	cp $C0
+	jr c, drawSprite3d_checkDraw_negX
+drawSprite3d_checkDraw_negY:
+	; Camera facing in the negative Y direction
+	; Return if camY + 16 < sprY
+	push de
+	ld de, 16
+	ld hl, (cam_yPos)
+	add hl, de
+	sbc hl, bc
+	call drawSprite3d_checkDraw_retNeg
+	pop de
+	jr drawSprite3d_checkDraw_end
+drawSprite3d_checkDraw_negX:
+	; Camera facing in the negative X direction
+	; Return if camX + 16 < sprX
+	push bc
+	ld bc, 16
+	ld hl, (cam_xPos)
+	add hl, bc
+	sbc hl, de
+	call drawSprite3d_checkDraw_retNeg
+	jr drawSprite3d_checkDraw_end_x
+drawSprite3d_checkDraw_pos:
+	cp $40
+	jr c, drawSprite3d_checkDraw_posX
+drawSprite3d_checkDraw_posY:
+	; Camera facing in the positive Y direction
+	; Return if camY - 16 > sprY
+	push de
+	ld de, -16
+	ld hl, (cam_yPos)
+	add hl, de
+	sbc hl, bc
+	call drawSprite3d_checkDraw_retPos
+	pop de
+	jr drawSprite3d_checkDraw_end
+drawSprite3d_checkDraw_posX:
+	; Camera facing in the positive X direction
+	; Return if camX - 16 > sprX
+	push bc
+	ld bc, -16
+	ld hl, (cam_xPos)
+	add hl, bc
+	sbc hl, de
+	call drawSprite3d_checkDraw_retPos
+		
+drawSprite3d_checkDraw_end_x:
+	pop bc
+drawSprite3d_checkDraw_end:
+	
+	; Calculate position of sprite on-screen
+	pop af
+	call position3d
+	
+	; Correct xPos
+	ld a, e
+	add a, $10
+	ld e, a
+	; Return if we can guarentee sprite isn't on-screen
+	; Return if x > $80 and x < $E0
+	cp $80
+	jr c, $+6
+	cp $E0
+	jr c, drawSprite3d_pop1ret
+	; Return if y > $60 and y < $E0
+	ld a, d
+	cp $60
+	jr c, $+6
+	cp $E0
+	jr c, drawSprite3d_pop1ret
+	; Return if shadowY <= $20
+	ld a, c
+	cp $21
+drawSprite3d_pop1ret:
+	jp c, pop1ret
+	rlca
+	jr c, drawSprite3d_pop1ret
+	ld (temp+2), a
+	
+	di	; So the interupt won't notice a stack overflow
+	; Add sprite to buffer
+	ld (temp), sp
+	ld sp, (spriteBuffer_pos)
+	; Save xPos & yPos
+	ld a, d
+	ld d, e
+	ld e, a
+	push de
+	; Save x scale
+	ex de, hl
+	ld bc, (temp+10)
+	push de			; Save base scale
+	call multSigned
+	ld l, h
+	ld h, e
+	ex (sp), hl		; Save x scale & retrieve base scale
+	; Save y scale
+	ex de, hl
+	ld bc, (temp+12)
+	call multSigned
+	ld l, h
+	ld h, e
+	push hl
+	; Get sprite page
+	ld a, (temp+7)
+	ld b, a
+	; Get sprite pointer based on rotation
+	ld hl, (temp)	; Restore sprite pointer
+	call $0033	; ld hl, (hl)	(I hope this is the same accross all OS versions)
+	; Set ram page to retrieve offseds and size
+	ld a, (basePage)
+	sub b
+	out ($07), a
+	; Get width & height
+	ld d, (hl) \ inc hl
+	ld e, (hl) \ inc hl
+	; Get xOff & yOff
+	ld b, (hl) \ inc hl
+	ld c, (hl) \ inc hl
+	ld a, $C1
+	out ($07), a
+	; Save xOff & yOff
+	push bc
+	; Save width & height
+	push de
+	; Get depth & page
+	ld bc, (temp+2)
+	ld (temp+2), de
+	ld a, (temp+7)
+	ld b, a
+	; Get angle relative to camera (ang-camAng)
+	ld a, (cam_ang)
+	ld e, a
+	ld a, (temp+8)
+	sub e
+	; Check if flipped sprite
+	bit 7, a
+	jr z, $+6
+	; Mark sprites as flipped and make angle positive
+	set 6, b
+	neg
+	; Get angle index
+	; index = (angle + 0.5segSize) / segSize
+	ld e, a
+	ld a, (temp+9)
+	or a
+	jr nz, drawSprite3d_calcRotate
+	res 6, b
+drawSprite3d_calcRotate:
+	; Save depth & flip information
+	push bc
+	jr z, drawSprite3d_noRotate
+	ld c, a
+	rrca
+	add a, e
+	; Divide by segment size (only works if a power of 2, might change later)
+	jr $+4
+	srl a
+	srl c
+	jr nz, $-4
+drawSprite3d_noRotate:
+	ld de, (temp+2)
+	; Get pointer to sprite
+	; ptr = index * ((width / 8) * 2) * height
+	ld c, a
+	ld a, e
+	rrca
+	rrca
+	ld e, d
+	ld d, a
+	call D_Times_C
+	ld d, e
+	call D_Times_C
+	; Save sprite pointer
+	add hl, bc
+	push hl
+	; 2 more unused bytes
+	push hl
+	
+	; Save sprite buffer position and increment sprite count
+	ld (spriteBuffer_pos), sp
+	ld sp, (temp)
+	pop hl
+	ld hl, spriteBuffer_num
+	inc (hl)
+	
+	ei
+	ret
+	
+drawSprite3d_checkDraw_retNeg:
+	; Return if S & V are the same
+	jp pe, $+6	; V is set
+	jp m, pop4ret
+	ret
+	jp p, pop4ret
+	ret
+drawSprite3d_checkDraw_retPos:
+	; Return if S & V are different
+	jp pe, $+6	; V is set
+	jp p, pop4ret
+	ret
+	jp m, pop4ret
+	ret
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;     Draw Sprites in Buffer     ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Draws sprites in buffer
+; Inputs:
+;	None
+; Outputs:
+;	None
+; Destroys:
+;	a, bc, de, hl, ix, iy, (temp)-(temp+3)
+drawSpritesInBuffer:	; {
+	; Return if there are no sprites
+	ld a, (spriteBuffer_num)
+	and a
+	ret z
+	; Setup search variables
+	ld b, a
+	ld iy, spriteBuffer+$0100
+	ld a, $FF
+	ld de, -sprBuff_segSize
+drawSprBuff_findLoop:
+	add iy, de
+	; Get this sprite's depth
+	ld h, (iy+sprBuff_depth)
+	; Check if this sprite is lower than the current checking depth
+	cp h
+	jr c, drawSprBuff_noNewSpr
+	; Setup draw sprite pointer
+	push iy
+	pop ix
+	ld a, h
+drawSprBuff_noNewSpr:
+	djnz drawSprBuff_findLoop
+	
+	; Check if this sprite has already been drawn
+	ld h, $FF
+	cp h
+	ret z
+	; Mark sprite as drawn
+	ld (ix+sprBuff_depth), h
+	
+	; Copy sprite to buffer
+	ld h, (ix+sprBuff_sprHi)	; Get sprite pointer
+	ld l, (ix+sprBuff_sprLo)
+	ld a, (ix+sprBuff_flip)
+	and %00111111	; Obtain page data from flip byte
+	call copySprToRAM
+	; Flip sprite if necesary
+	ld d, $02
+	ld e, (ix+sprBuff_flip)	; Get flip
+	ld b, (ix+sprBuff_height)	; Get base width & height
+	ld c, (ix+sprBuff_width)
+	sla e
+	call c, flipSprBuffer_vert
+	sla e
+	call c, flipSprBuffer_horiz
+	
+	; Get sprite draw variables
+	ld (temp), sp
+	di
+	ld sp, ix
+	pop hl
+	pop hl
+	pop hl
+	pop hl	; Get width & height
+	pop de	; Get xOff & yOff
+	pop bc	; Scale Y
+	push hl	; Save width & height
+	exx
+	pop hl	; width & height
+	pop bc	; Scale X
+	pop de	; x & y
+	
+	ld sp, (temp)	; Restore stack pointer
+	ei
+	
+	; Put sprite
+	call putSprite_scaled
+	; Loop
+	;ld hl, spriteBuffer_num
+	;dec (hl)
+	jr drawSpritesInBuffer
+	
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;     Flip sprite vertically     ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Flips a sprite located in the sprite buffer vertically
+;	Todo: write the code
+; Inputs:
+;	b: height
+;	c: width
+;	d: chunk size - usually will be 2 for sprites with a mask
+; Outputs:
+;	None
+; Destroys:
+;	a, hl, (temp)-(temp+3)
+flipSprBuffer_vert:		; {
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;    Flip sprite horizontally    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Flips a sprite located in the sprite buffer horizontally
+; Inputs:
+;	b: height
+;	c: width
+;	d: chunk size - usually will be 2 for sprites with a mask
+; Outputs:
+;	None
+; Destroys:
+;	a, hl, (temp+0)-(temp+3)
+flipSprBuffer_horiz:		; {
+	; Divide width by 8
+	ld a, c
+	rrca
+	rrca
+	rrca
+	and %00011111
+	ld c, a
+	push bc
+	push de
+	; Calculate and save chunkSize*2 (and chunkSize)
+	ld a, d
+	ld (temp+3), a
+	rlca
+	ld (temp), a
+	; Calculate and save width*chunkSize
+	push bc
+	call D_Times_C
+	ld (temp+1), bc
+	; Calculate left right start position
+	ld h, buffer/256
+	;ld a, c	; a is already loaded with c
+	sub d
+	ld l, a
+	ld de, buffer
+	; Calculate width/2 rounded up
+	pop bc
+	sra c
+	jr nc, $+3
+	inc c
+	; Loop for height
+flipSprBuffer_horiz_heightLoop:
+	push bc
+	push hl
+	push de
+	; Loop for width/2
+	ld b, c
+flipSprBuffer_horiz_rowLoop:
+	push bc
+	; Loop for chunk size
+	ld a, (temp+3)
+	ld b, a
+flipSprBuffer_horiz_chunkLoop:
+	; Swap between (hl) and (de), reversing the bits
+	ld a, (de)
+	call reverseA
+	ld c, (hl)
+	ld (hl), a
+	ld a, c
+	call reverseA
+	ld (de), a
+	inc hl
+	inc de
+	; Loop chunk
+	djnz flipSprBuffer_horiz_chunkLoop
+	
+	; Move right pointer (hl) backwards by chunkSize*2
+	ld a, (temp)
+	ld c, a
+	sbc hl, bc	; b is garenteed to be 0, c flag is garenteed to be reset
+	; Loop row
+	pop bc
+	djnz flipSprBuffer_horiz_rowLoop
+	
+	; Return left and right pointers to their saved values
+	; and move to the next row by adding (width*chunksize)
+	pop hl		; hl & de poped in reverse order because they are swapped later
+	pop de
+	ld bc, (temp+1)
+	add hl, bc
+	ex de, hl
+	add hl, bc
+	; Loop height
+	pop bc
+	djnz flipSprBuffer_horiz_heightLoop
+	pop de
+	pop bc
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Reverse A Bits         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Reverses the bits in A
+;	Modified from: https://www.retroprogramming.com/2014/01/fast-z80-bit-reversal.html
+; Inputs:
+;	a: input bits
+; Outputs:
+;	a: output bits
+; Destroys:
+;	c
+reverseA:	; {
+	ld c, a		; a = 76543210
+	rlca
+	rlca		; a = 54321076
+	xor c
+	and $AA
+	xor c		; a = 56341270
+	ld c, a
+	rlca
+	rlca
+	rlca		; a = 41270563
+	rrc c		; c = 05634127
+	xor c
+	and $66
+	xor c		; a = 01234567
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Position in 3D         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Calculates a screen postion given a floor position
+; Inputs:
+;	a: zPos
+;	bc: yPos
+;	de: xPos
+; Outputs:
+;	c: shadow yPos
+;	d: screen yPos
+;	e: screen xPos
+;	hl: scale
+; Destroys:
+;	a, b, ix, (temp+0 - temp+6)
+position3d:		; {
+	push af
+	; Subtract camera x
+	ld hl, (cam_yPos)
+	sub a
+	sub l
+	ld l, a
+	sbc a, a
+	sub h
+	ld h, a
+	add hl, bc
+	; Subtract camera y
+	ld bc, (cam_xPos)
+	ex de, hl
+	or a
+	sbc hl, bc
+	ld b, h
+	ld c, l
+	
+	; Find angle
+	push de
+	call trig_atan2
+	
+draw3d_angleRange	.equ	$20
+	; Compare angle to camera angle to see if we should display it
+	ld h, a		; Preserve angle
+	ld a, (cam_ang)
+	sub a, h
+	cp draw3d_angleRange
+	jr c, position3d_angInRange
+	cp -draw3d_angleRange
+	jp c, pop4ret	; Jump out of parent call
+position3d_angInRange:
+	
+	pop de
+	push hl		; Save preserved angle
+	
+	; Find distance along plane
+	; Square yPos
+	push de
+	ld de, bc
+	call multSigned
+	; Square xPos
+	pop bc
+	push de
+	push hl
+	ld de, bc
+	call multSigned
+	; Add squared xPos and yPos
+	pop bc
+	add hl, bc
+	pop bc
+	ex de, hl
+	adc hl, bc
+	push de
+	pop ix
+	; Get square root to complete distance calculation
+	call SqrtHLIX
+	
+	; Divide by precision (8) and multiply by 256
+	; TODO: add special case for extremely large or extremely small de values
+	xor a
+	sra d \ rr e \ rra
+	sra d \ rr e \ rra
+	sra d \ rr e \ rra
+	ld h, e
+	ld l, a
+	
+	; Retrieve x position and correct for angle
+	ld a, (cam_ang)
+	add a, $E0
+	pop bc
+	ld c, a
+	ld a, b
+	sub c
+	ld e, a
+	push de
+	push hl
+	
+	; xAng = ((x-(width/2))/width)*xFov
+	; xAng = ((2*x)-width)/2
+	; xAng = ((2*x)-64)/2
+	; xAng = (x-32)
+	ld a, e
+	sub 32
+	
+	; dist = newDist*cos(xAng)
+	call trig_cosine
+	pop bc
+	ex de, hl
+	call multSigned
+	ld l, h
+	ld h, e
+	
+	; yAng = atan(dist)
+	call trig_atan
+	
+	; y = (height*(64-yAng-initAng))/yFov
+	; y = (64*(64-yAng+15))/32
+	; y = (64*(79-yAng))/32
+	; y = (5056-(64*yAng))/32
+	; y = 158-(2*yAng)
+	rlca
+	ld b, a
+	ld a, 158
+	sub b
+	
+	; scale = (yPos-32)/24
+	pop de
+	pop bc
+	ld d, a
+	push de
+	push bc
+	sub $20
+	ld d, a
+	ld e, 0
+	ld bc, 24
+	call DE_Div_BC
+	pop bc
+	push de
+	; Scale zPos
+	ld c, b
+	ld b, $00
+	call DE_Times_BC
+	; Add zPos to yPos
+	ld a, h
+	neg
+	pop hl
+	pop de
+	ld c, d
+	add a, d
+	ld d, a
+	
+	ret
+	
+; }
+	
+	
+; }

@@ -1,0 +1,1628 @@
+; Math & Calculation Routines
+	
+	
+	
+; Trig Functions {
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Trigonometric Cos         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Same as Trigonometric Sine except with Cosine
+; Inputs:
+;	a: angle
+; Outputs:
+;	hl: value
+;	de: absolute value
+; Destroys:
+;	a
+trig_cos:
+trig_cosine:
+	add a, $40
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Trigonometric Sin         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Computes the sin of an angle with
+;	input ranging from $00 to $FF, and
+;	output ranging from $FEFF to $0100.
+;	Input Values:		Output Values:
+;	0°   = $00			-1   = $FF00
+;	45°  = $20			-0.5 = $FF80
+;	90°  = $40			0    = $0000
+;	180° = $80			0.5  = $0080
+;	270° = $C0			1    = $0100
+;	360° = $00
+; Inputs:
+;	a: angle
+; Outputs:
+;	hl: value
+;	de: absolute value
+; Destroys:
+;	a
+trig_sin:
+trig_sine:	; {
+	ld l, a		; Save old a
+	and %01111111	; Check if output is zero
+	jr z, trigSin_zero
+	bit 6, a	; Check if needs to reverse
+	jr z, trigSin_noReverse
+	ld d, a
+	ld a, $80
+	sub d	; a = ($80 - a) if angle in range $40-$80 or $C0-$FF
+trigSin_noReverse:
+	bit 7, l
+	ld h, sinTable / 256
+	ld d, 0
+	ld l, a
+	dec hl		; dec l would work too but that would overwrite the z flag
+	ld e, (hl)
+	inc de
+	jr z, trigSin_positive	; If angle is greater than $80 then we must take the inverse of the result
+	ld hl, $0000
+	sbc hl, de
+	ret
+trigSin_zero:
+	ld de, $0000
+trigSin_positive:
+	ld h, d
+	ld l, e
+	ret
+	
+	
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;      Trigonometric Tangent      ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Computes the tangent given an angle
+; Inputs:
+;	a: angle
+; Outputs:
+;	hl: value
+; Destroys:
+;	a, de
+trig_tan:
+trig_tangent:	; {
+	and %01111111
+	; Reverse graph if within $40-$80 range
+	bit 6, a
+	ld h, a
+	jr z, $+6
+	ld l, a
+	ld a, $80
+	sub l
+	; Check if retrieve 1 or 2 bytes
+	bit 5, a
+	jr z, trig_tangent_low
+	; Retrieve 2 bytes
+	sub $20
+	rlca
+	bit 6, h
+	ld h, trig_tanTable_2byte / 256
+	add a, $20
+	ld l, a
+	ld a, (hl)
+	inc hl
+	ld h, (hl)
+	ld l, a
+	ret z
+	jr trig_tangent_makeNeg
+trig_tangent_low:
+	; Retrieve 1 byte
+	bit 6, h
+	ld h, trig_tanTable_1byte / 256
+	ld l, a
+	ld l, (hl)
+	ld h, 0
+	ret z
+trig_tangent_makeNeg:
+	; Make negative if reversed
+	xor a
+	sub l
+	ld l, a
+	sbc a, a
+	sub h
+	ld h, a
+	ret
+	
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;     Trigonometric Arctangent     ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Computes an angle using a direct arctangent
+;	Note: only works with positive inputs for now
+; Inputs:
+;	hl: value
+; Outputs:
+;	a: angle
+; Destroys:
+;	de, hl
+trig_atan:		; {
+	; Account for negative
+	bit 7, h
+	jr z, trig_atan_noNeg
+	sub a
+	sub l
+	ld l, a
+	sbc a, a
+	sub h
+	ld h, a
+	call trig_atan_noNeg
+	neg
+	ret
+trig_atan_noNeg:
+	; Check if in first section
+	ld a, h
+	cp $04
+	jr c, trig_atan_inSec1
+	; Check if in second section
+	cp $24
+	jr c, trig_atan_inSec2
+	ld a, $40
+	ret
+trig_atan_inSec2:
+	; Divide by 128
+	ld a, h
+	sla l
+	rla
+	sub $08
+	ld l, a
+	ld h, 0
+	ld de, trig_atan2_table + $80
+	jr trig_atan_getAng
+trig_atan_inSec1:
+	; Divide by 8
+	ld a, l
+	sra h
+	rra
+	sra h
+	rra
+	sra h
+	rra
+	ld l, a
+	ld de, trig_atan2_table
+trig_atan_getAng:
+	add hl, de
+	ld a, (hl)
+	ret
+	
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;     Trigonometric Arctangent 2    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Computes an angle from an x vector and y vector
+; Inputs:
+;	de: y vector
+;	bc: x vector
+; Outputs:
+;	a: angle
+; Destroys:
+;	de, hl, (temp+5)
+trig_atan2:		; {
+	ld a, d
+	or e
+	jr nz, trig_atan2_calc
+	bit 7, b
+	ret z
+	ld a, $80
+	ret
+trig_atan2_40orC0:
+	ld a, $40
+	bit 7, d
+	ret z
+	add a, $80
+	ret
+trig_atan2_calc:
+	ld a, b
+	or c
+	jr z, trig_atan2_40orC0
+	ld a, d
+	xor b
+	ld (temp+5), a
+	push bc
+	ld ix, $0000
+	call divSigned_abs
+	ld h, l
+	ld a, ixh
+	ld l, a
+	pop bc
+trig_atan2_checkBounds:
+	; Check if in first section
+	ld a, h
+	cp $04
+	jr c, trig_atan2_inSec1
+	; Check if in second section
+	cp $24
+	jr c, trig_atan2_inSec2
+	ld a, (temp+5)
+	xor b
+	bit 7, a
+	ld a, $40
+	ret z
+	ld a, $C0
+	ret
+trig_atan2_inSec2:
+	; Divide by 128
+	ld a, h
+	sla l
+	rla
+	add a, $80 - $08
+	jr trig_atan2_getAng
+trig_atan2_inSec1:
+	; Divide by 8
+	ld a, l
+	sra h
+	rra
+	sra h
+	rra
+	sra h
+	rra
+trig_atan2_getAng:
+	add a, $40
+	ld l, a
+	ld h, trig_atan2_table / 256
+	ld a, (temp+5)
+	rlca
+	ld a, (hl)
+	jr nc, $+4
+	neg
+	bit 7, b
+	ret z
+	add a, $80
+	ret
+	
+	
+; }
+	
+	
+; }
+	
+	
+; Physics Calculations {
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Move from Velocity        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Moves position from a velocity
+;	Velocity is divided by 16 before being added
+; Inputs:
+;	de': yVel
+;	hl': xVel
+;	bde: yPos
+;	chl: xPos
+; Outputs:
+;	bde: yPos
+;	chl: xPos
+; Destroys:
+;	a, bc, bc', de', hl'
+moveVelocity:	; {
+	; Add x
+	push de
+	push hl
+	exx
+	ld b, $04
+	call shiftHL_right
+	exx
+	add a, c
+	ld c, a
+	exx
+	pop bc
+	adc hl, bc
+	; Add y
+	ex de, hl
+	ld b, $04
+	call shiftHL_right
+	pop bc
+	exx
+	add a, b
+	ld b, a
+	push bc
+	exx
+	adc hl, bc
+	ex de, hl
+	pop bc
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Apply Force xy/ma        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Applys a force by accelerating a given velocity
+;	Velocity given in x & y components (xy)
+;	Acceleration given in magnitude & angle (ma)
+; Inputs:
+;	de: yVel
+;	hl: xVel
+;	a: forceAng
+;	bc: force
+; Outputs:
+;	de: yVel
+;	hl: xVel
+; Destroys:
+;	a, bc
+applyForce_xy_ma:	; {
+	push hl
+	push de
+	; yForce = sin(forceAng)*force
+	push af
+	call trig_sin
+	ex de, hl
+	push bc
+	call multSigned
+	pop bc
+	ld d, e
+	ld e, h
+	pop af
+	; yVel += yForce
+	pop hl
+	add hl, de
+	pop de
+	push hl
+	push de
+	; xForce = cos(forceAng)*force
+	call trig_cos
+	ex de, hl
+	call multSigned
+	ld d, e
+	ld e, h
+	; xVel += xForce
+	pop hl
+	add hl, de
+	pop de
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;  Vector Components to Mag+Angle  ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Converts x & y components of a vector to
+;	a vector magnitude and angle
+; Inputs:
+;	de: y component
+;	hl: x component
+; Outputs:
+;	a: angle
+;	bc: magnitude
+; Destroys:
+;	(temp+5)
+xy_to_ma:	; {
+	push hl
+	push de
+	; magnitude = sqrt(x^2 + y^2)
+	; Calculate y squared
+	push hl
+	ld b, d
+	ld c, e
+	call multSigned
+	pop bc
+	push de
+	push hl
+	; Calculate x squared
+	ld d, b
+	ld e, c
+	call multSigned
+	; Add x squared and y squared
+	pop bc
+	add hl, bc
+	pop bc
+	ex de, hl
+	adc hl, bc
+	; Calculate square root
+	push ix
+	push de
+	pop ix
+	call SqrtHLIX
+	pop ix
+	ld b, d
+	ld c, e
+	; Calculate angle
+	pop de
+	pop hl
+	push bc
+	push de
+	ld b, h
+	ld c, l
+	call trig_atan2
+	ld h, b
+	ld l, c
+	pop de
+	pop bc
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;  Mag+Angle to Vector Components  ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Converts vector magnitude and direction
+;	to vector x & y components
+; Inputs:
+;	a: angle
+;	bc: magnitude
+; Outputs:
+;	de: y component
+;	hl: x component
+; Destroys:
+;	None
+ma_to_xy:	; {
+	; Calculate x component
+	; x = cos(ang)*mag
+	push af
+	call trig_cos
+	ex de, hl
+	push bc
+	call multSigned
+	pop bc
+	pop af
+	ld d, e
+	ld e, h
+	push de
+	; Calculate y component
+	; y = sin(ang)*mag
+	push af
+	call trig_sin
+	ex de, hl
+	call multSigned
+	pop af
+	ld d, e
+	ld e, h
+	pop hl
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Vector Rotation        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Rotates a vector given by x & y components
+; Inputs:
+;	a: rotation angle
+;	de: y component
+;	hl: x component
+; Outputs:
+;	de: y component
+;	hl: x component
+; Destroys:
+;	(temp) - (temp+5)
+rotate_xy:	; {
+	push af
+	push bc
+	; new x = x*cos(ang) - y*sin(ang)
+	; x*cos(ang)
+	push de
+	push hl
+	ld b, a
+	call trig_cos
+	ld a, b
+	ld (temp), hl
+	ex de, hl
+	pop bc
+	push af
+	push bc
+	call multSigned
+	pop bc
+	ld l, h
+	ld h, e
+	ld (temp+4), hl
+	; -y*sin(ang)
+	pop af
+	call trig_sin
+	ld (temp+2), hl
+	sub a
+	sub l
+	ld e, a
+	sbc a, a
+	sub h
+	ld d, a
+	pop hl
+	push bc
+	ld b, h
+	ld c, l
+	push bc
+	call multSigned
+	pop bc
+	ld d, e
+	ld e, h
+	ld hl, (temp+4)
+	add hl, de
+	; new y = x*sin(ang) + y*cos(ang)
+	; y*cos(ang)
+	push hl
+	ld de, (temp+0)
+	call multSigned
+	ld l, h
+	ld h, e
+	; x*sin(ang)
+	pop de
+	pop bc
+	push de
+	push hl
+	ld de, (temp+2)
+	call multSigned
+	ld d, e
+	ld e, h
+	pop hl
+	add hl, de
+	ex de, hl
+	pop hl
+	pop bc
+	pop af
+	ret
+; }
+	
+	
+; }
+	
+	
+; Math Functions {
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Square Root HLIX        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Finds the square root of hlix
+;	Slight Modification from: https://wikiti.brandonw.net/index.php?title=Z80_Routines:Math:Square_root
+;	I'll be honest, I have no clue what the code bellow does
+; Inputs:
+;	hlix: value to square root
+; Outputs:
+;	de: square root
+;	ahl: remainder
+SqrtHLIX:	; {
+;NOTE: This uses undocumented instructions `sll` (a.k.a. `slia`) and `ld a,ixh` and `ld a,ixl`
+
+sqrtHLIX:
+;Input: HLIX
+;Output: DE is the sqrt, AHL is the remainder
+;speed: 751+6{0,6}+{0,3+{0,18}}+{0,38}+sqrtHL
+;min: 1103
+;max: 1237
+;avg: 1165.5
+;166 bytes
+	
+	call sqrtHL   ;expects returns A as sqrt, HL as remainder, D = 0
+	ld d, 0
+	push bc
+	pop hl
+	ld a, e
+	
+	add a,a
+	ld e,a
+	rl d
+	
+	ld a,ixh
+	sll e \ rl d
+	add a,a \ adc hl,hl
+	add a,a \ adc hl,hl
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	.db $FE     ;start of `cp *`
+_:
+	inc e
+	
+	sll e \ rl d
+	add a,a \ adc hl,hl
+	add a,a \ adc hl,hl
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	.db $FE     ;start of `cp *`
+_:
+	inc e
+	
+	sll e \ rl d
+	add a,a \ adc hl,hl
+	add a,a \ adc hl,hl
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	.db $FE     ;start of `cp *`
+_:
+	inc e
+	
+	sll e \ rl d
+	add a,a \ adc hl,hl
+	add a,a \ adc hl,hl
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	.db $FE     ;start of `cp *`
+_:
+	inc e
+	
+;Now we have four more iterations
+;The first two are no problem
+	ld a,ixl
+	sll e \ rl d
+	add a,a \ adc hl,hl
+	add a,a \ adc hl,hl
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	.db $FE     ;start of `cp *`
+_:
+	inc e
+
+	sll e \ rl d
+	add a,a \ adc hl,hl
+	add a,a \ adc hl,hl
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	.db $FE     ;start of `cp *`
+_:
+	inc e
+
+sqrt32_iter15:
+;On the next iteration, HL might temporarily overflow by 1 bit
+	sll e \ rl d      ;sla e \ rl d \ inc e
+	add a,a
+	adc hl,hl
+	add a,a
+	adc hl,hl       ; This might overflow!
+	jr c,sqrt32_iter15_br0
+;
+	sbc hl,de
+	jr nc,+_
+	add hl,de
+	dec e
+	jr sqrt32_iter16
+sqrt32_iter15_br0:
+	or a
+	sbc hl,de
+_:
+	inc e
+
+;On the next iteration, HL is allowed to overflow, DE could overflow with our current routine, but it needs to be shifted right at the end, anyways
+sqrt32_iter16:
+	add a,a
+	ld b,a        ;either 0x00 or 0x80
+	adc hl,hl
+	rla
+	adc hl,hl
+	rla
+;AHL - (DE+DE+1)
+	sbc hl,de \ sbc a,b
+	inc e
+	or a
+	sbc hl,de \ sbc a,b
+	ret p
+	add hl,de
+	adc a,b
+	dec e
+	add hl,de
+	adc a,b
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;      Square Root HL      ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Desciption:
+;	Finds the square root of hl
+;	Taken from: http://z80-heaven.wikidot.com/math
+; Inputs:
+;	hl: value to square root
+; Outputs:
+;	bc: remainder
+;	e: square root
+; Destroys:
+;	a, hl
+SqrtHL:		; {
+	ld bc,0800h   ;3  10      ;10
+	ld e,c        ;1  4       ;4
+	xor a         ;1  4       ;4
+SHL4Loop:          ;           ;
+	add hl,hl     ;1  11      ;88
+	rl c          ;2  8       ;64
+	adc hl,hl     ;2  15      ;120
+	rl c          ;2  8       ;64
+	jr nc,$+4     ;2  7|12    ;96+3y   ;y is the number of overflows. max is 2
+	set 0,l       ;2  8       ;--
+	ld a,e        ;1  4       ;32
+	add a,a       ;1  4       ;32
+	ld e,a        ;1  4       ;32
+	add a,a       ;1  4       ;32
+	bit 0,l       ;2  8       ;64
+	jr nz,$+5     ;2  7|12    ;144-6y
+	sub c         ;1  4       ;32
+	jr nc,$+7     ;2  7|12    ;96+15x  ;number of bits in the result
+		ld a,c    ;1  4       ;
+		sub e     ;1  4       ;
+		inc e     ;1  4       ;
+		sub e     ;1  4       ;
+		ld c,a    ;1  4       ;
+	djnz SHL4Loop ;2  13|8    ;99
+	bit 0,l       ;2  8       ;8
+	ret z         ;1  11|19   ;11+8z
+	inc b         ;1          ;
+	ret           ;1          ;
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Divide DE by BC        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Divides two unsigned numbers
+;	Modified from: http://map.grauw.nl/articles/mult_div_shifts.php
+; Inputs:
+;	de: dividend
+;	bc: divisor
+; Outputs:
+;	de: quotiant
+;	hl: remainder
+; Destroys:
+;	a
+DE_Div_BC:		; {
+	push bc
+    ld hl,0
+    ld a,d
+	ld c, e
+    ld b,8
+	pop de
+	push de
+Div16_Loop1:
+    rla
+    adc hl,hl
+    sbc hl,de
+    jr nc,Div16_NoAdd1
+    add hl,de
+Div16_NoAdd1:
+    djnz Div16_Loop1
+    rla
+    cpl
+    ld b,a
+    ld a,c
+    ld c,b
+    ld b,8
+Div16_Loop2:
+    rla
+    adc hl,hl
+    sbc hl,de
+    jr nc,Div16_NoAdd2
+    add hl,de
+Div16_NoAdd2:
+    djnz Div16_Loop2
+    rla
+    cpl
+    ld d,c
+    ld e,a
+	pop bc
+    ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;    Signed Division Absolute Value    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Divides two signed numbers
+; Inputs:
+;	deix: dividend
+;	bc: divisor
+; Outputs:
+;	hlix: quotiant
+;	de: remainder
+; Destroys:
+;	bc
+divSigned_abs:		; {
+	; Check sign of deix
+	bit 7, d
+	jr z, divSigned_posDE
+	sub a, a
+	ld h, a
+	sub a, ixl
+	ld ixl, a
+	ld a, h
+	sbc a, ixh
+	ld ixh, a
+	ld a, h
+	sbc a, e
+	ld e, a
+	ld a, h
+	sbc a, d
+	ld d, a
+	; Check sign of bc
+	bit 7, b
+	jr z, divSigned_negDE_posBC
+	sub a
+	sub c
+	ld c, a
+	sbc a, a
+	sub b
+	ld b, a
+divSigned_noFlip:
+	jp div32_16
+divSigned_posDE:
+	bit 7, b
+	jr z, divSigned_noFlip
+	sub a
+	sub c
+	ld c, a
+	sbc a, a
+	sub b
+	ld b, a
+divSigned_negDE_posBC:
+	;call div32_16
+	jp div32_16
+	;sub a
+	;sub ixl
+	;ld ixl, a
+	;sbc a, a
+	;sub ixh
+	;ld ixh, a
+	;ccf
+	;sbc a, a
+	;sub l
+	;ld l, a
+	;ccf
+	;sbc a, a
+	;sub h
+	;ld h, a
+	;ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Signed Division        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Divedes two signed numbers
+; Inputs:
+;	deix: dividend
+;	bc: divisor
+; Outputs:
+;	hlix: quotiant
+;	de: remainder
+; Destroys:
+;	a, bc
+divSigned:		; {
+	; Check sign of de/bc
+	ld a, d
+	xor b
+	rlca
+	jr c, divSigned_negative
+divSigned_positive:
+	jp divSigned_abs
+divSigned_negative:
+	call divSigned_abs
+	; Flip hlix
+	sub a, a
+	ld c, a
+	sub a, ixl
+	ld ixl, a
+	ld a, c
+	sbc a, ixh
+	ld ixh, a
+	ld a, c
+	sbc a, l
+	ld l, a
+	ld a, c
+	sbc a, h
+	ld h, a
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;      Divide DEIX by BC      ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Divides a 32-bit number by a 16-bit number
+;	Taken from: https://wikiti.brandonw.net/index.php?title=Z80_Routines:Math:Division
+; Inputs:
+;	deix: divident
+;	bc: divisor
+; Outputs:
+;	hlix: quotiant
+;	de: remainder
+; Destroys:
+;	bc
+DEIX_Div_BC:
+div32_16:		; {
+;DEIX/BC -> HLIX remainder DE
+;170+4*div32_16_sub8
+;min: 2182cc
+;max: 2790cc
+;avg: 2462cc
+;60 bytes
+	
+	; Negate BC to allow add instead of sbc
+	xor a      ; 4
+	; Need to set HL to 0 anyways, so save 2cc and a byte
+	ld h,a     ; 4
+	ld l,a     ; 4
+	sub c      ; 4
+	ld c,a     ; 4
+	sbc a,a    ; 4
+	sub b      ; 4
+	ld b,a     ; 4
+	
+	ld a,d              ; 4
+	call div32_16_sub8  ; 17
+	rla                 ; 4
+	ld d,a              ; 4
+	
+	ld a,e              ; 4
+	call div32_16_sub8  ; 17
+	rla                 ; 4
+	ld e,a              ; 4
+	
+	ld a,ixh            ; 8
+	call div32_16_sub8  ; 17
+	rla                 ; 4
+	ld ixh,a            ; 8
+	
+	ld a,ixl            ; 8
+	call div32_16_sub8  ; 17
+	rla                 ; 4
+	ld ixl,a            ; 8
+	
+	ex de,hl   ; 4
+	ret        ; 10
+	
+div32_16_sub8:
+;119+8*div32_16_sub
+;min: 503cc
+;max: 655cc
+;avg: 573cc
+	call div32_16_1
+div32_16_1:
+;17+2(17+2(div32_16_sub)))
+	call div32_16_2
+div32_16_2:
+;17+2(div32_16_sub)
+	call div32_16_sub
+div32_16_sub:
+;48+{8,0+{0,19}}
+;min: 48cc
+;max: 67cc
+;avg: 56.75cc
+	rla        ; 4
+	adc hl,hl  ; 15
+	jr c, div32_16_3    ;12/7
+	add hl,bc  ; 11
+	ret c      ;11/5
+	sbc hl,bc  ; 15
+	ret        ; 10
+div32_16_3:
+	add hl,bc  ; 11
+	scf        ; 4
+	ret        ; 10\
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;          DE Times BC          ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Multiplies DE by BC
+;	Taken from: http://z80-heaven.wikidot.com/math
+; Inputs:
+;	bc: number
+;	de: number
+; Outputs:
+;	dehl: product
+; Destroys:
+;	a
+DE_Times_BC:	; {
+	ld hl, $0000		; 10
+	ld a, $10			; 7
+DE_Times_BC_loop:
+	add hl, hl			; 11
+	rl e				; 8
+	rl d				; 8
+	jr nc, $+6			; 7/12
+	add hl, bc			; 11
+	jr nc, $+3			; 7/12
+	inc de				; 6
+	dec a				; 4
+	jr nz, DE_Times_BC_loop	; 7/12
+	ret					; 10
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;      Multiply 2 signed numbers      ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Use your imagination
+; Inputs:
+;	bc: number
+;	de: number
+; Outputs:
+;	dehl: product
+;	bc: bc abs value
+; Destroys:
+;	a
+multSigned:		; {
+	; Check sign of de
+	bit 7, d
+	jr z, multSigned_posDE
+	or a
+	ld hl, $0000
+	sbc hl, de
+	ex de, hl
+	; Check sign of bc
+	bit 7, b
+	jr z, multSigned_negDE_posBC
+	or a
+	ld hl, $0000
+	sbc hl, bc
+	ld b, h
+	ld c, l
+multSigned_noNegSet:
+	jp DE_Times_BC
+multSigned_posDE:
+	bit 7, b
+	jr z, multSigned_noNegSet
+	or a
+	ld hl, $0000
+	sbc hl, bc
+	ld b, h
+	ld c, l
+multSigned_negDE_posBC:
+	call DE_Times_BC
+	ex de, hl
+	push hl
+	ld hl, $0000
+	push hl
+	or a
+	sbc hl, de
+	ex de, hl
+	pop hl
+	pop bc
+	sbc hl, bc
+	ex de, hl
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;           D Times C           ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Multiplies D and C
+;	Modified from: http://z80-heaven.wikidot.com/math#toc6
+; Inputs:
+;	d: number
+;	c: number
+; Outputs:
+;	bc: result
+; Destroys:
+;	a
+D_Times_C:		; {
+	xor a
+	ld b, $08
+D_Times_C_loop:
+	add a, a
+	rl c
+	jr nc, $+6
+	add a, d
+	jr nc, $+3
+	inc c
+	djnz D_Times_C_loop
+	ld b, c
+	ld c, a
+	ret
+; }
+	
+	
+; }
+	
+	
+; Collision Code {
+	
+col_wall_bounce:
+	xor a
+	jr wallCollision
+	
+col_wall:
+	ld a, $02
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;       Apply Wall Collision       ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Applies the effects of a wall collision
+; Inputs:
+;	None, uses the car data values in the buffer
+; Outputs:
+;	Applys the wall collision
+;	iy: FLAGS
+; Destroys:
+;	a, bc, de, hl, ix, (temp+0) - (temp+3)
+wallCollision:	; {
+	; xIntA: (temp+0)
+	; yIntA: (temp+2)
+	ld iy, FLAGS
+	ld (iy+asm_Flag1), a
+	; xVel == 0?
+	ld bc, (buffer+car_xVel)
+	ld a, b
+	or c
+	jr z, wallCollision_yCheck
+	; slope = yv / xv
+	ld de, (buffer+car_yVel)
+	ld ix, 0
+	call divSigned
+	; slope: hl.ix
+	; y-interceptA = (-slope * xLo) + yLo
+	ld b, l
+	ld c, ixh
+	push bc		; save slope
+	xor a		; Negate slope
+	sub c
+	ld c, a
+	sbc a, a
+	sub b
+	ld b, a
+	ld a, (buffer+car_xPosLo)
+	ld e, a	\	ld d, 0
+	call multSigned
+	ld l, h
+	ld h, e
+	ld a, (buffer+car_yPosLo)
+	ld e, a	\	ld d, 0
+	add hl, de
+	; x-interceptA = 0
+	ld bc, $FFFF
+	pop de		; Restore slope
+	; xVel < 0?
+	ld a, (buffer+car_xVelHi)
+	rlca
+	jr nc, wallCollision_xVel_pos
+	; x-interceptA = 1
+	ld bc, $0100
+	; y-intercpetA = slope + yInterceptA
+	add hl, de
+wallCollision_xVel_pos:
+	
+	; If yInterceptA is less than -1 or greater than 1 skip to y-collision check
+	; (high byte is between $02 and $FE)
+	ld a, h
+	cp $02
+	jr c, wallCollision_xVel_yIntInRange
+	cp $FF	; only good value above 2 is $FF
+	jr nz, wallCollision_yCheck
+wallCollision_xVel_yIntInRange:
+	ld (temp+0), bc		; Save xInterceptA
+	ld (temp+2), hl		; Save yInterceptA
+	; Get tile at intersection point
+	; yHi + yIntA
+	ld a, (buffer+car_yPosHi)
+	ld d, a	\	ld e, 0
+	add hl, de
+	ex de, hl
+	; xHi
+	ld hl, (buffer+car_xPos)
+	call getTileCollisionType
+	; Skip to y-collision check if intercetion point does not have a wall
+	cp tileColId_wall
+	jr c, wallCollision_yCheck
+	; If yIntA is 0 then skip y-collision check and use this collision
+	;ld hl, (temp+0)
+	;ld a, h
+	;or l
+	;jr z, wallCollision_flipXv
+	; Set flag saying that x-collision works and continue to checking y option
+	set 0, (iy+asm_Flag1)
+	
+wallCollision_yCheck:
+	; slope = xv / yv
+	ld de, (buffer+car_xVel)
+	ld ix, 0
+	ld bc, (buffer+car_yVel)
+	call divSigned
+	; slope: hl.ix
+	; x-interceptB = (-slope * yLo) + xLo
+	ld b, l
+	ld c, ixh
+	push bc		; save slope
+	xor a		; Negate slope
+	sub c
+	ld c, a
+	sbc a, a
+	sub b
+	ld b, a
+	ld a, (buffer+car_yPosLo)	; yLo
+	ld e, a	\	ld d, 0
+	call multSigned
+	ld l, h
+	ld h, e
+	ld a, (buffer+car_xPosLo)	; xLo
+	ld e, a	\	ld d, 0
+	add hl, de
+	; y-interceptB = 0
+	ld bc, $FFFF
+	pop de		; Restore slope
+	; yVel < 0?
+	ld a, (buffer+car_yVelHi)
+	rlca
+	jr nc, wallCollision_yVel_pos
+	; y-interceptB = 1
+	ld bc, $0100
+	; x-intercpetB = slope + xInterceptB
+	add hl, de
+wallCollision_yVel_pos:
+	ex de, hl
+	
+	; If x-collision did not produce good results skip straight to finalizing y-collision
+	bit 0, (iy+asm_Flag1)
+	jr z, wallCollision_flipYv
+	; If xInterceptB is greater than 0 or less than 1 finalize x-collision (???)
+	ld a, d
+	cp $FF
+	jr z, wallCollision_yVel_xIntInRange
+	cp $01
+	jr nz, wallCollision_flipXv
+wallCollision_yVel_xIntInRange:
+	push bc		; Save yInterceptB
+	push de		; Save xInterceptB
+	; Get tile at intersection point
+	; xHi + xIntB
+	ld a, (buffer+car_xPosHi)
+	ld h, a	\	ld l, 0
+	add hl, de
+	; yHi
+	ld de, (buffer+car_yPos)
+	call getTileCollisionType
+	pop de		; Restore xInterceptB
+	pop bc		; Restore yInterceptB
+	; If this is a wall, then we do y-collision. Otherwise we do x-collision
+	cp tileColId_wall
+	jr nz, wallCollision_flipXv
+	
+wallCollision_flipYv:
+	; Flip y-vel
+	ld hl, (buffer+car_yVel)
+	xor a
+	sub l
+	ld l, a
+	sbc a, a
+	sub h
+	ld h, a
+	ld (buffer+car_yVel), hl
+	; Go to final correction
+	jr wallCollision_fin
+	
+wallCollision_flipXv:
+	; Flip x-vel
+	ld hl, (buffer+car_xVel)
+	xor a
+	sub l
+	ld l, a
+	sbc a, a
+	sub h
+	ld h, a
+	ld (buffer+car_xVel), hl
+	; Restore x-int & y-int
+	ld de, (temp+0)
+	ld bc, (temp+2)
+	
+wallCollision_fin:
+	; x-int: de
+	; y-int: bc
+	; xPos += xInt
+	; yPos += yInt
+	ld hl, (buffer+car_xPos)
+	ld l, 0
+	add hl, de
+	ld (buffer+car_xPos), hl
+	ld hl, (buffer+car_yPos)
+	ld l, 0
+	add hl, bc
+	ld (buffer+car_yPos), hl
+	
+	; Scale velocity based on "bouncyness" of the wall
+	ld hl, (buffer+car_xVel)
+	ld de, (buffer+car_yVel)
+	call xy_to_ma
+	ld hl, bc
+	add hl, hl
+	add hl, bc
+	sra h
+	rr l
+	bit 1, (iy+asm_Flag1)
+	jr z, wallCollision_bouncy
+	
+	; Not bouncy wall, divide velecity
+	sra h
+	rr l
+	;jr wallCollision_applyVel
+wallCollision_bouncy:
+	; Bouncy wall, multiply velocity
+	
+wallCollision_applyVel:
+	; Check if velocity is really low
+	ld bc, $0200
+	call deadzoneHL
+	jr z, wallCollision_applyVel_good
+	; Minimum velocity
+	ld hl, $0200
+wallCollision_applyVel_good:
+	
+	ld bc, hl
+	call ma_to_xy
+	ld (buffer+car_yVel), de
+	ld (buffer+car_xVel), hl
+	
+	ret
+	
+	
+; }
+	
+	
+; }
+	
+	
+; RNG Routines {
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;       Hash RNG Increment       ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Takes 2 inputs (reffered to as left and right)
+;	and hashes that data to produce 2 outputs
+;	Uses 3 steps: xor add, xor rotate, and multiply add
+;	1) xor left & right together, then add the result to left and right
+;	2) xor the new left & right, rotate left to the left right
+;		to the right by the lower 3 bits of the xor result
+;	3) Multiply left by 5, add 7; Multiply right by 7, add 5
+; Inputs:
+;	l: left hash
+;	h: right hash
+; Outputs:
+;	l: left hash
+;	h: right hash
+;	a: copy of right hash
+;	b: 0
+; Destroys:
+;	None
+hashRNG_inc:	; {
+	; First step, add xor to left and right
+	ld a, l
+	xor h
+	ld b, a
+	add a, h
+	ld h, a
+	ld a, b
+	add a, l
+	ld l, a
+	; Second step, rotate left/right by xor
+	xor h
+	and %00000111
+	ld b, a
+	ld a, l
+	jr z, hashRNG_inc_noShift
+hashRNG_inc_shiftLoop:
+	rlca
+	rrc h
+	djnz hashRNG_inc_shiftLoop
+	ld l, a
+hashRNG_inc_noShift:
+	; Third step, multiply and add
+	add a, a	; *2
+	add a, a	; *4
+	add a, l	; *5
+	add a, $07
+	ld l, a
+	ld a, h
+	add a, a	; *2
+	add a, h	; *3
+	add a, a	; *6
+	add a, h	; *7
+	add a, $05
+	ld h, a
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;        Object Hash RNG        ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Takes an rng seed, object id, and the
+;	track timer to generate a random number
+; Inputs:
+;	c: RNG number seed
+; Outputs:
+;	a: Random output
+;	b: Random output 2
+; Destroys:
+;	None
+hashRNG_obj:	; {
+	push hl
+	push de
+	ld d, c
+	ld e, ixl
+	ld hl, (globalTimerLoLo)
+	call hashRNG_full
+	pop de
+	pop hl
+	ret
+; }
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;         Full Hash RNG         ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Takes 4 inputs and hashes them together
+;	to produce 1 rng output
+; Inputs:
+;	dehl: Hash input
+; Outputs:
+;	a: Random output
+;	b: Random output 2
+; Destroys:
+;	dehl
+hashRNG_full:	; {
+	call hashRNG_inc
+	;call hashRNG_inc
+	xor l
+	ld l, a
+	ex de, hl
+	call hashRNG_inc
+	call hashRNG_inc
+	;call hashRNG_inc
+	xor l
+	ld l, a
+	ld h, e
+	call hashRNG_inc
+	;call hashRNG_inc
+	xor l
+	ld b, l
+	ret
+; }
+	
+	
+; }
+	
+	
+; Compression/Decompression Routines {
+	
+	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;           Decompress Data           ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Description:
+;	Decompresses data using a combination
+;	of RLE and LZSS
+; Inputs:
+;	bc: decompressed data end
+;	de: decompressed data destination
+;	hl: compressed data pointer
+; Outputs:
+;	None
+; Destroys:
+;	a, bc, de, hl, (temp)-(temp+3)
+decompData:		; {
+	dec bc
+	ld (temp), bc
+	push hl
+decompData_loop:
+	pop hl
+	; Get segment length
+	ld a, (hl)
+	and %00011111
+	ld b, a
+	; Get segment type
+	ld a, (hl)
+	inc hl
+	; Check if long length param
+	rlca
+	jr c, $+7
+	ld c, b
+	ld b, 0
+	jr $+4
+	ld c, (hl)
+	inc hl
+	inc bc
+	
+	; Check if RLE
+	rlca
+	jr c, decompData_noRLE
+	; Check RLE type
+	rlca
+	ld a, 0
+	jr nc, $+4
+	ld a, (hl)
+	inc hl
+	; Copy over byte
+	ld (de), a
+	push hl
+	ld h, d
+	ld l, e
+	inc de
+	jr decompData_ldir
+	
+decompData_noRLE:
+	; Check if LZSS or data stream
+	rlca
+	jr c, decompData_lzss
+	; Copy data stream
+	ldir
+	push hl
+	jr decompData_checkEnd
+decompData_lzss:
+	ld (temp+2), bc
+	; Find offset
+	ld b, (hl)
+	inc hl
+	srl b
+	jr c, $+7
+	ld c, b
+	ld b, 0
+	jr $+4
+	ld c, (hl)
+	inc hl
+	; Get source copy pointer
+	push hl
+	ld h, d
+	ld l, e
+	or a
+	sbc hl, bc
+	ld bc, (temp+2)
+decompData_ldir:
+	; Copy data
+	ldir
+	
+decompData_checkEnd:
+	ld hl, (temp)
+	or a
+	sbc hl, de
+	bit 7, h
+	jr z, decompData_loop
+	
+	; Check if decompression overrun
+	ld a, h
+	and l
+	inc a
+	jp z, pop1ret
+	
+	; Error
+	ld a, $04
+	ld (temp+12), hl
+	ld hl, (temp)
+	ld (temp+14), hl
+	;jp errorMsg
+	; Error routine is directly after this!
+	
+; }
+	
+	
+; }
+	

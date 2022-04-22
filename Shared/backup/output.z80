@@ -1,0 +1,471 @@
+;--------------------------------------------------------
+; File Created by SDCC : free open source ANSI-C Compiler
+; Version 4.1.0 #12072 (MINGW64)
+;--------------------------------------------------------
+	.module main
+	.optsdcc -mz80
+	
+;--------------------------------------------------------
+; Public variables in this module
+;--------------------------------------------------------
+	.globl _physicsStep
+	.globl _cameraBehind
+	.globl _getTileType
+	.globl _cos
+	.globl _sin
+	.globl _yOffset
+	.globl _xOffset
+	.globl _angle
+;--------------------------------------------------------
+; special function registers
+;--------------------------------------------------------
+;--------------------------------------------------------
+; ram data
+;--------------------------------------------------------
+	.area _DATA
+_angle::
+	.ds 2
+_xOffset::
+	.ds 2
+_yOffset::
+	.ds 2
+;--------------------------------------------------------
+; ram data
+;--------------------------------------------------------
+	.area _INITIALIZED
+;--------------------------------------------------------
+; absolute external ram data
+;--------------------------------------------------------
+	.area _DABS (ABS)
+;--------------------------------------------------------
+; global & static initialisations
+;--------------------------------------------------------
+	.area _HOME
+	.area _GSINIT
+	.area _GSFINAL
+	.area _GSINIT
+;--------------------------------------------------------
+; Home
+;--------------------------------------------------------
+	.area _HOME
+	.area _HOME
+;--------------------------------------------------------
+; code
+;--------------------------------------------------------
+	.area _CODE
+;main.c:73: void cameraBehind(short x, short y, short objectAngle, short distance) {
+;	---------------------------------
+; Function cameraBehind
+; ---------------------------------
+_cameraBehind::
+	push	ix
+	ld	ix,#0
+	add	ix,sp
+;main.c:75: yOffset = ((y*256) - sin(-objectAngle) * distance) / 256;
+	ld	b, 6 (ix)
+	ld	c, #0x00
+	ld	a, 8 (ix)
+	neg
+	ld	d, a
+	push	bc
+	push	de
+	push	de
+	inc	sp
+	call	_sin
+	inc	sp
+	push	hl
+	ld	l, 10 (ix)
+	ld	h, 11 (ix)
+	ex	(sp), hl
+	push	hl
+	call	__mulint
+	pop	af
+	pop	af
+	pop	de
+	pop	bc
+	ld	a, c
+	sub	a, l
+	ld	c, a
+	ld	a, b
+	sbc	a, h
+	ld	b, a
+	ld	h, b
+	bit	7, b
+	jr	Z, 00103$
+	ld	hl, #0x00ff
+	add	hl, bc
+00103$:
+	ld	l, h
+	ld	a, l
+	rlca
+	sbc	a, a
+	ld	h, a
+	ld	(_yOffset), hl
+;main.c:76: xOffset = ((x*256) - cos(-objectAngle) * distance) / 256;
+	ld	b, 4 (ix)
+	ld	c, #0x00
+	push	bc
+	push	de
+	inc	sp
+	call	_cos
+	inc	sp
+	ld	e, 10 (ix)
+	ld	d, 11 (ix)
+	push	de
+	push	hl
+	call	__mulint
+	pop	af
+	pop	af
+	pop	bc
+	ld	a, c
+	sub	a, l
+	ld	c, a
+	ld	a, b
+	sbc	a, h
+	ld	b, a
+	ld	h, b
+	bit	7, b
+	jr	Z, 00104$
+	ld	hl, #0x00ff
+	add	hl, bc
+00104$:
+	ld	l, h
+	ld	a, l
+	rlca
+	sbc	a, a
+	ld	h, a
+	ld	(_xOffset), hl
+;main.c:77: }
+	pop	ix
+	ret
+;main.c:81: void physicsStep(unsigned short kartX, unsigned short kartY, signed char kartSteerAnim, float kartVel, byte kartAngle, byte key) {
+;	---------------------------------
+; Function physicsStep
+; ---------------------------------
+_physicsStep::
+	push	ix
+	ld	ix,#0
+	add	ix,sp
+	ld	hl, #-16
+	add	hl, sp
+	ld	sp, hl
+;main.c:94: unsigned char currentTile = getTileType(kartX / scale, kartY / scale);
+	ld	e, 6 (ix)
+	ld	d, 7 (ix)
+	srl	d
+	rr	e
+	srl	d
+	rr	e
+	ld	c, 4 (ix)
+	ld	b, 5 (ix)
+	srl	b
+	rr	c
+	srl	b
+	rr	c
+	push	de
+	push	bc
+	call	_getTileType
+	pop	af
+	pop	af
+	ld	a, l
+;main.c:95: if (currentTile == 0 || currentTile == 68) {
+	or	a,a
+	jr	Z, 00101$
+	sub	a, #0x44
+	jr	NZ, 00102$
+00101$:
+;main.c:96: kartVel *= 0.8;
+	ld	l, 11 (ix)
+	ld	h, 12 (ix)
+	push	hl
+	ld	l, 9 (ix)
+	ld	h, 10 (ix)
+	push	hl
+	ld	hl, #0x3f4c
+	push	hl
+	ld	hl, #0xcccd
+	push	hl
+	call	___fsmul
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	ld	9 (ix), l
+	ld	10 (ix), h
+	ld	11 (ix), e
+	ld	12 (ix), d
+	jr	00103$
+00102$:
+;main.c:98: kartVel *= 0.9;
+	ld	l, 11 (ix)
+	ld	h, 12 (ix)
+	push	hl
+	ld	l, 9 (ix)
+	ld	h, 10 (ix)
+	push	hl
+	ld	hl, #0x3f66
+	push	hl
+	ld	hl, #0x6666
+	push	hl
+	call	___fsmul
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	ld	9 (ix), l
+	ld	10 (ix), h
+	ld	11 (ix), e
+	ld	12 (ix), d
+00103$:
+;main.c:100: float oldKartX = kartX;
+	ld	l, 4 (ix)
+	ld	h, 5 (ix)
+	push	hl
+	call	___uint2fs
+	pop	af
+	ex	(sp), hl
+	ld	-14 (ix), e
+	ld	-13 (ix), d
+	ld	hl, #4
+	add	hl, sp
+	ex	de, hl
+	ld	hl, #0
+	add	hl, sp
+	ld	bc, #4
+	ldir
+;main.c:101: float oldKartY = kartY;
+	ld	l, 6 (ix)
+	ld	h, 7 (ix)
+	push	hl
+	call	___uint2fs
+	pop	af
+	ld	-8 (ix), l
+	ld	-7 (ix), h
+	ld	-6 (ix), e
+	ld	-5 (ix), d
+	ld	hl, #12
+	add	hl, sp
+	ex	de, hl
+	ld	hl, #8
+	add	hl, sp
+	ld	bc, #4
+	ldir
+;main.c:102: kartY += (kartVel * sin(kartAngle)) / 256;
+	ld	a, 13 (ix)
+	push	af
+	inc	sp
+	call	_sin
+	inc	sp
+	push	hl
+	call	___sint2fs
+	pop	af
+	push	de
+	push	hl
+	ld	l, 11 (ix)
+	ld	h, 12 (ix)
+	push	hl
+	ld	l, 9 (ix)
+	ld	h, 10 (ix)
+	push	hl
+	call	___fsmul
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	ld	bc, #0x4380
+	push	bc
+	ld	bc, #0x0000
+	push	bc
+	push	de
+	push	hl
+	call	___fsdiv
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	push	de
+	push	hl
+	ld	l, -6 (ix)
+	ld	h, -5 (ix)
+	push	hl
+	ld	l, -8 (ix)
+	ld	h, -7 (ix)
+	push	hl
+	call	___fsadd
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	push	de
+	push	hl
+	call	___fs2uint
+	pop	af
+	pop	af
+	ld	6 (ix), l
+	ld	7 (ix), h
+;main.c:103: kartX += (kartVel * cos(kartAngle)) / 256;
+	ld	a, 13 (ix)
+	push	af
+	inc	sp
+	call	_cos
+	inc	sp
+	push	hl
+	call	___sint2fs
+	pop	af
+	push	de
+	push	hl
+	ld	l, 11 (ix)
+	ld	h, 12 (ix)
+	push	hl
+	ld	l, 9 (ix)
+	ld	h, 10 (ix)
+	push	hl
+	call	___fsmul
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	ld	bc, #0x4380
+	push	bc
+	ld	bc, #0x0000
+	push	bc
+	push	de
+	push	hl
+	call	___fsdiv
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	push	de
+	push	hl
+	ld	l, -14 (ix)
+	ld	h, -13 (ix)
+	push	hl
+	ld	l, -16 (ix)
+	ld	h, -15 (ix)
+	push	hl
+	call	___fsadd
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	push	de
+	push	hl
+	call	___fs2uint
+	pop	af
+	pop	af
+	ld	4 (ix), l
+	ld	5 (ix), h
+;main.c:104: unsigned char newTile = getTileType(kartX / scale, kartY / scale);
+	ld	e, 6 (ix)
+	ld	d, 7 (ix)
+	srl	d
+	rr	e
+	srl	d
+	rr	e
+	ld	c, 4 (ix)
+	ld	b, 5 (ix)
+	srl	b
+	rr	c
+	srl	b
+	rr	c
+	push	de
+	push	bc
+	call	_getTileType
+	pop	af
+	pop	af
+;main.c:105: if (newTile >= 240 && newTile <= 243) { // Barrier
+	ld	a, l
+	sub	a, #0xf0
+	jr	C, 00106$
+	ld	a, #0xf3
+	sub	a, l
+	jr	C, 00106$
+;main.c:106: kartX = oldKartX;
+	ld	l, -10 (ix)
+	ld	h, -9 (ix)
+	push	hl
+	ld	l, -12 (ix)
+	ld	h, -11 (ix)
+	push	hl
+	call	___fs2uint
+	pop	af
+	pop	af
+	ld	4 (ix), l
+	ld	5 (ix), h
+;main.c:107: kartY = oldKartY;
+	ld	l, -2 (ix)
+	ld	h, -1 (ix)
+	push	hl
+	ld	l, -4 (ix)
+	ld	h, -3 (ix)
+	push	hl
+	call	___fs2uint
+	pop	af
+	pop	af
+	ld	6 (ix), l
+	ld	7 (ix), h
+00106$:
+;main.c:109: cameraBehind(kartX, kartY, kartAngle, 150); // TODO: calculate this rather than guessing
+	ld	c, 13 (ix)
+	ld	b, #0x00
+	ld	hl, #0x0096
+	push	hl
+	push	bc
+	ld	l, 6 (ix)
+	ld	h, 7 (ix)
+	push	hl
+	ld	l, 4 (ix)
+	ld	h, 5 (ix)
+	push	hl
+	call	_cameraBehind
+	ld	hl, #8
+	add	hl, sp
+	ld	sp, hl
+;main.c:121: if (shiftPressed) {
+	ld	c, 14 (ix)
+	bit	3, c
+	jr	Z, 00109$
+;main.c:122: kartVel += kartSpeed;
+	push	bc
+	ld	hl, #0x3fc0
+	push	hl
+	ld	hl, #0x0000
+	push	hl
+	ld	l, 11 (ix)
+	ld	h, 12 (ix)
+	push	hl
+	ld	l, 9 (ix)
+	ld	h, 10 (ix)
+	push	hl
+	call	___fsadd
+	pop	af
+	pop	af
+	pop	af
+	pop	af
+	pop	bc
+	ld	9 (ix), l
+	ld	10 (ix), h
+	ld	11 (ix), e
+	ld	12 (ix), d
+00109$:
+;main.c:125: if (leftPressed && !rightPressed && kartVel > 3) {
+	ld	l, 11 (ix)
+	ld	h, 12 (ix)
+	push	hl
+	ld	l, 9 (ix)
+	ld	h, 10 (ix)
+	push	hl
+	ld	hl, #0x4040
+	push	hl
+	ld	hl, #0x0000
+	push	hl
+	call	___fslt
+;main.c:148: kartSteerAnim = 0;
+;main.c:155: }
+	ld	sp,ix
+	pop	ix
+	ret
+	.area _CODE
+	.area _INITIALIZER
+	.area _CABS (ABS)

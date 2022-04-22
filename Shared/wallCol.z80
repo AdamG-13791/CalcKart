@@ -1,0 +1,471 @@
+;--------------------------------------------------------
+; File Created by SDCC : free open source ANSI-C Compiler
+; Version 4.1.0 #12072 (MINGW64)
+;--------------------------------------------------------
+;	MODULE wallCol
+;	.optsdcc -mz80
+	; Generated using the z80asm/z88 tokens.
+;	XREF __muluchar_rrx_s
+;	XREF __mulschar_rrx_s
+;	XREF __mulint_rrx_s
+;	XREF __mullong_rrx_s
+;	XREF __divuchar_rrx_s
+;	XREF __divschar_rrx_s
+;	XREF __divsint_rrx_s
+;	XREF __divuint_rrx_s
+;	XREF __divulong_rrx_s
+;	XREF __divslong_rrx_s
+;	XREF __rrulong_rrx_s
+;	XREF __rrslong_rrx_s
+;	XREF __rlulong_rrx_s
+;	XREF __rlslong_rrx_s
+
+;--------------------------------------------------------
+; Public variables in this module
+;--------------------------------------------------------
+;	XDEF _wallCol
+;	XDEF _div
+;	XDEF _mult
+;	XDEF _getTileCollisionType
+;	XDEF _yVel
+;	XDEF _xVel
+;	XDEF _yPosC
+;	XDEF _xPosC
+;	XDEF _yPos
+;	XDEF _xPos
+;--------------------------------------------------------
+; Externals used
+;--------------------------------------------------------
+;	XREF _div
+;	XREF _mult
+;	XREF _getTileCollisionType
+;--------------------------------------------------------
+; special function registers
+;--------------------------------------------------------
+;--------------------------------------------------------
+; ram data
+;--------------------------------------------------------
+	; Aread BSS
+
+c_wallCol_xPos .equ temp + 16
+;	DEFS 2
+
+c_wallCol_yPos .equ temp + 18
+;	DEFS 2
+
+c_wallCol_xPosC .equ temp + 20
+;	DEFS 2
+
+c_wallCol_yPosC .equ temp + 22
+;	DEFS 2
+
+c_wallCol_xVel .equ temp + 24
+;	DEFS 2
+
+c_wallCol_yVel .equ temp + 26
+;	DEFS 2
+;--------------------------------------------------------
+; ram data
+;--------------------------------------------------------
+	; Area  INITIALIZED
+;--------------------------------------------------------
+; absolute external ram data
+;--------------------------------------------------------
+	; Area  DABS (ABS)
+;--------------------------------------------------------
+; global & static initialisations
+;--------------------------------------------------------
+	; Area  HOME
+	; Area  GSINIT
+	; Area  GSFINAL
+	; Area  GSINIT
+;--------------------------------------------------------
+; Home
+;--------------------------------------------------------
+	; Area HOME
+	; Area HOME
+;--------------------------------------------------------
+; code
+;--------------------------------------------------------
+	; Area CODE
+;wallCol.c:16: void wallCol() {
+;	---------------------------------
+; Function wallCol
+; ---------------------------------
+c_wallCol_wallCol:
+	call	c_wallCol___sdcc_enter_ix
+	ld	hl, -11
+	add	hl, sp
+	ld	sp, hl
+;wallCol.c:17: xPosC = xPos;
+	ld	hl, c_wallCol_xPos
+	ld	a, (hl)
+	ld	hl, c_wallCol_xPosC
+	ld	(hl), a
+	ld	hl, c_wallCol_xPos + 1
+	ld	a, (hl)
+	ld	hl, c_wallCol_xPosC + 1
+	ld	(hl), a
+;wallCol.c:18: yPosC = yPos;
+	ld	hl, c_wallCol_yPos
+	ld	a, (hl)
+	ld	hl, c_wallCol_yPosC
+	ld	(hl), a
+	ld	hl, c_wallCol_yPos + 1
+	ld	a, (hl)
+	ld	hl, c_wallCol_yPosC + 1
+	ld	(hl), a
+;wallCol.c:19: char tile = getTileCollisionType();
+	call	c_wallCol_getTileCollisionType
+	ld	a, l
+;wallCol.c:20: if (tile == wallTile) {
+	sub	a, $04
+	jp	NZ,l_wallCol00158
+	jp	l_wallCol00119
+
+l_wallCol00158:
+	jp	l_wallCol00120
+
+l_wallCol00119:
+;wallCol.c:21: char xCol = 1;
+	ld	(ix-9), $01
+;wallCol.c:22: unsigned char xLo = *((unsigned char*)(&xPos));
+	ld	hl, c_wallCol_xPos + 0
+	ld	a, (hl)
+	ld	(ix-1), a
+;wallCol.c:23: unsigned char yLo = *((unsigned char*)(&yPos));
+	ld	hl, c_wallCol_yPos + 0
+	ld	a, (hl)
+	ld	(ix-2), a
+;wallCol.c:24: xPos = xPos & 0xFF00;
+	ld	bc, (c_wallCol_xPos)
+	xor	a, a
+	ld	hl, c_wallCol_xPos
+	ld	(hl), a
+	inc	hl
+	ld	(hl), b
+;wallCol.c:25: yPos = yPos & 0xFF00;
+	ld	bc, (c_wallCol_yPos)
+	xor	a, a
+	ld	hl, c_wallCol_yPos
+	ld	(hl), a
+	inc	hl
+	ld	(hl), b
+;wallCol.c:29: short xIntA = 0;
+	ld	bc, $0000
+;wallCol.c:30: short yIntA = 0;
+	xor	a, a
+	ld	(ix-8), a
+	ld	(ix-7), a
+;wallCol.c:31: short xIntB = 0;
+	xor	a, a
+	ld	(ix-6), a
+	ld	(ix-5), a
+;wallCol.c:32: short yIntB = 0;
+	xor	a, a
+	ld	(ix-4), a
+	ld	(ix-3), a
+;wallCol.c:33: if (xVel != 0) {
+	ld	hl, c_wallCol_xVel + 1
+	ld	a, (hl)
+	dec	hl
+	or	a, (hl)
+	jp	NZ, l_wallCol00106
+	jp	l_wallCol00107
+
+l_wallCol00106:
+;wallCol.c:34: short slope = div(yVel, xVel);
+	ld	hl, (c_wallCol_xVel)
+	push	hl
+	ld	hl, (c_wallCol_yVel)
+	push	hl
+	call	c_wallCol_div
+	pop	af
+	pop	af
+	ex	de, hl
+	inc	sp
+	inc	sp
+	push	de
+;wallCol.c:35: if (xVel >= 0) {
+	ld	bc, (c_wallCol_xVel)
+;wallCol.c:37: yIntA = (-slope * xLo) + yLo;
+	xor	a, a
+	sub	a, (ix-11)
+	ld	e, a
+	ld	a, $00
+	sbc	a, (ix-10)
+	ld	d, a
+	ld	l, (ix-1)
+	ld	h, $00
+	ld	a, (ix-2)
+	ld	(ix-8), a
+	xor	a, a
+	ld	(ix-7), a
+	push	bc
+	push	hl
+	push	de
+;wallCol.c:35: if (xVel >= 0) {
+	call	c_wallCol__mulint
+	pop	af
+	pop	af
+	ex	de, hl
+	pop	bc
+	bit	7, b
+	jp	NZ, l_wallCol00102
+
+l_wallCol00101:
+;wallCol.c:36: xIntA = 0;
+	ld	bc, $0000
+;wallCol.c:37: yIntA = (-slope * xLo) + yLo;
+	ld	l, (ix-8)
+	ld	h, (ix-7)
+	add	hl, de
+	ld	(ix-8), l
+	ld	(ix-7), h
+;wallCol.c:38: xPosC = xPos + xIntA;
+	ld	hl, c_wallCol_xPos
+	ld	a, (hl)
+	ld	hl, c_wallCol_xPosC
+	ld	(hl), a
+	ld	hl, c_wallCol_xPos + 1
+	ld	a, (hl)
+	ld	hl, c_wallCol_xPosC + 1
+	ld	(hl), a
+	jp	l_wallCol00103
+
+l_wallCol00102:
+;wallCol.c:40: xIntA = 256;
+	ld	bc, $0100
+;wallCol.c:41: yIntA = slope - (-slope * xLo) + yLo;
+	ld	a, (ix-11)
+	sub	a, e
+	ld	e, a
+	ld	a, (ix-10)
+	sbc	a, d
+	ld	d, a
+	ld	l, (ix-8)
+	ld	h, (ix-7)
+	add	hl, de
+	ld	(ix-8), l
+	ld	(ix-7), h
+;wallCol.c:42: xPosC = xPos + xIntA - 256;
+	ld	hl, c_wallCol_xPos
+	ld	e, (hl)
+	inc	hl
+	ld	a, (hl)
+	inc	a
+	ld	d, a
+	ld	a, e
+	add	a, $00
+	ld	e, a
+	ld	a, d
+	adc	a, $FF
+	ld	hl, c_wallCol_xPosC
+	ld	(hl), e
+	inc	hl
+	ld	(hl), a
+
+l_wallCol00103:
+;wallCol.c:44: yPosC = yPos + yIntA;
+	ld	e, (ix-8)
+	ld	d, (ix-7)
+	ld	hl, c_wallCol_yPos
+	ld	a, (hl)
+	add	a, e
+	ld	hl, c_wallCol_yPosC
+	ld	(hl), a
+	ld	hl, c_wallCol_yPos + 1
+	ld	a, (hl)
+	adc	a, d
+	ld	hl, c_wallCol_yPosC + 1
+	ld	(hl), a
+;wallCol.c:45: if (getTileCollisionType() != wallTile) {
+	push	bc
+	call	c_wallCol_getTileCollisionType
+	ld	a, l
+	pop	bc
+	sub	a, $04
+	jp	NZ,l_wallCol00159
+	jp	l_wallCol00107
+
+l_wallCol00159:
+
+l_wallCol00104:
+;wallCol.c:46: xCol = 0;
+	xor	a, a
+	ld	(ix-9), a
+
+l_wallCol00105:
+
+l_wallCol00107:
+;wallCol.c:49: if (yVel != 0) {
+	ld	hl, c_wallCol_yVel + 1
+	ld	a, (hl)
+	dec	hl
+	or	a, (hl)
+	jp	NZ, l_wallCol00111
+	jp	l_wallCol00112
+
+l_wallCol00111:
+;wallCol.c:50: short slope = div(yVel, xVel);
+	push	bc
+	ld	hl, (c_wallCol_xVel)
+	push	hl
+	ld	hl, (c_wallCol_yVel)
+	push	hl
+	call	c_wallCol_div
+	pop	af
+	pop	af
+	ex	de, hl
+	pop	bc
+	ld	(ix-6), e
+	ld	(ix-5), d
+;wallCol.c:51: if (yVel >= 0) {
+	ld	hl, c_wallCol_yVel
+	ld	a, (hl)
+	ld	(ix-4), a
+	inc	hl
+	ld	a, (hl)
+	ld	(ix-3), a
+;wallCol.c:53: xIntB = mult(-slope, yLo) + xLo;
+	ld	l, (ix-2)
+	ld	h, $00
+	xor	a, a
+	sub	a, (ix-6)
+	ld	e, a
+	ld	a, $00
+	sbc	a, (ix-5)
+	ld	d, a
+	ld	a, (ix-1)
+	ld	(ix-2), a
+	xor	a, a
+	ld	(ix-1), a
+;wallCol.c:51: if (yVel >= 0) {
+	bit	7, (ix-3)
+	jp	NZ, l_wallCol00109
+
+l_wallCol00108:
+;wallCol.c:52: yIntB = 0;
+	xor	a, a
+	ld	(ix-4), a
+	ld	(ix-3), a
+;wallCol.c:53: xIntB = mult(-slope, yLo) + xLo;
+	push	bc
+	push	hl
+	push	de
+	call	c_wallCol_mult
+	pop	af
+	pop	af
+	ex	de, hl
+	pop	bc
+	ld	l, (ix-2)
+	ld	h, (ix-1)
+	add	hl, de
+	ld	(ix-6), l
+	ld	(ix-5), h
+	jp	l_wallCol00112
+
+l_wallCol00109:
+;wallCol.c:56: yIntB = 256;
+	ld	(ix-4), $00
+	ld	(ix-3), $01
+;wallCol.c:57: xIntB = slope - mult(-slope, yLo) + xLo;
+	push	bc
+	push	hl
+	push	de
+	call	c_wallCol_mult
+	pop	af
+	pop	af
+	ex	de, hl
+	pop	bc
+	ld	a, (ix-6)
+	sub	a, e
+	ld	e, a
+	ld	a, (ix-5)
+	sbc	a, d
+	ld	d, a
+	ld	l, (ix-2)
+	ld	h, (ix-1)
+	add	hl, de
+	ld	(ix-6), l
+	ld	(ix-5), h
+
+l_wallCol00110:
+
+l_wallCol00112:
+;wallCol.c:66: if ((xCol == 0) || ((xIntB >= 256 || xIntB < 0) && (xIntB < 512 && xIntB >= -256))) {
+	ld	a, (ix-9)
+	or	a, a
+	jp	NZ, l_wallCol00118
+	jp	l_wallCol00113
+
+l_wallCol00118:
+	ld	e, (ix-6)
+	ld	d, (ix-5)
+	ld	a, d
+	xor	a, $80
+	sub	a, $81
+	jp	C, l_wallCol00115
+	jp	l_wallCol00117
+
+l_wallCol00115:
+	bit	7, d
+	jp	NZ, l_wallCol00117
+	jp	l_wallCol00114
+
+l_wallCol00117:
+	ld	a, d
+	xor	a, $80
+	sub	a, $82
+	jp	C, l_wallCol00116
+	jp	l_wallCol00114
+
+l_wallCol00116:
+	ld	a, d
+	xor	a, $80
+	sub	a, $7F
+	jp	C, l_wallCol00114
+
+l_wallCol00113:
+;wallCol.c:67: xIntA = xIntB;
+	ld	c, (ix-6)
+	ld	b, (ix-5)
+;wallCol.c:68: yIntA = yIntB;
+	ld	a, (ix-4)
+	ld	(ix-8), a
+	ld	a, (ix-3)
+	ld	(ix-7), a
+
+l_wallCol00114:
+;wallCol.c:70: xPos += xIntA;
+	ld	hl, c_wallCol_xPos
+	ld	a, (hl)
+	add	a, c
+	ld	(hl), a
+	inc	hl
+	ld	a, (hl)
+	adc	a, b
+	ld	(hl), a
+;wallCol.c:71: yPos += yIntA;
+	ld	c, (ix-8)
+	ld	b, (ix-7)
+	ld	hl, c_wallCol_yPos
+	ld	a, (hl)
+	add	a, c
+	ld	(hl), a
+	inc	hl
+	ld	a, (hl)
+	adc	a, b
+	ld	(hl), a
+
+l_wallCol00120:
+;wallCol.c:74: return;
+
+l_wallCol00121:
+;wallCol.c:76: }
+	ld	sp, ix
+	pop	ix
+	ret
+	; Area CODE
+	; Area  INITIALIZER
+	; Area  CABS (ABS)

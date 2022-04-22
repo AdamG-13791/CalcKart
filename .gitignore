@@ -1,0 +1,13 @@
+/RabbitSign/*
+/Spasm/*
+
+!/RabbitSign/labCorrect.py
+!/RabbitSign/packxxk.exe
+!/RabbitSign/packxxk.pdf
+!/RabbitSign/rabbitsign.exe
+!/RabbitSign/rabbitsign/pdf
+!/RabbitSign/README.txt
+
+!/Spasm/binpac8x.py
+!/Spasm/spasm64.exe
+!/Spasm/ti83plus.inc
